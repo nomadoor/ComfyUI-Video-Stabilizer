@@ -375,7 +375,7 @@ class VideoStabilizerFlowNode(io.ComfyNode):
                     default="auto",
                     display_name="GPU Acceleration",
                 ),
-                io.Bool.Input(
+                io.Boolean.Input(
                     "emit_debug",
                     default=False,
                     display_name="Emit Debug Info",

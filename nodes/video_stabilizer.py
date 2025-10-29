@@ -20,35 +20,6 @@ HOMOGRAPHY_MIN_POINTS = 4
 AFFINE_MIN_POINTS = 3
 MASK_THRESHOLD = 0.995
 
-# Define a lightweight RGB color input leveraging the generic widget support.
-RGBColor = io.Custom("RGB_COLOR")
-
-
-class _RGBColorInput(io.WidgetInput):
-    def __init__(
-        self,
-        id: str,
-        display_name: str | None = None,
-        optional: bool = False,
-        tooltip: str | None = None,
-        default: Sequence[int] = (128, 128, 128),
-    ) -> None:
-        default_rgb = [int(np.clip(c, 0, 255)) for c in default]
-        super().__init__(
-            id=id,
-            display_name=display_name,
-            optional=optional,
-            tooltip=tooltip,
-            default=default_rgb,
-            widget_type="color",
-            extra_dict={"format": "rgb"},
-        )
-
-
-RGBColor.Input = _RGBColorInput
-RGBColor.Type = Tuple[int, int, int]
-
-
 @dataclass
 class BoundingBox:
     y0: int
@@ -75,21 +46,26 @@ def _numpy_to_tensor(frames: np.ndarray, reference: torch.Tensor) -> torch.Tenso
 
 
 def _parse_pad_color(raw: object) -> Tuple[int, int, int]:
-    if isinstance(raw, (list, tuple)) and len(raw) == 3:
-        return tuple(int(np.clip(v, 0, 255)) for v in raw)
+    if isinstance(raw, str):
+        candidate = raw.strip()
+        if candidate.startswith("(") and candidate.endswith(")"):
+            candidate = candidate[1:-1]
+        parts = [segment.strip() for segment in candidate.split(",") if segment.strip()]
+        if len(parts) == 3:
+            try:
+                values = [float(part) for part in parts]
+                return tuple(int(np.clip(round(value), 0, 255)) for value in values)
+            except ValueError:
+                pass
+    if isinstance(raw, Sequence) and not isinstance(raw, (str, bytes)) and len(raw) == 3:
+        try:
+            return tuple(int(np.clip(float(v), 0, 255)) for v in raw)
+        except (TypeError, ValueError):
+            pass
     if isinstance(raw, dict):
         keys = ("r", "g", "b")
         if all(k in raw for k in keys):
             return tuple(int(np.clip(raw[k], 0, 255)) for k in keys)
-    if isinstance(raw, str):
-        value = raw.strip()
-        if value.startswith("#"):
-            value = value[1:]
-        if len(value) == 6:
-            try:
-                return tuple(int(value[i : i + 2], 16) for i in range(0, 6, 2))
-            except ValueError:
-                pass
     return 128, 128, 128
 
 
@@ -226,6 +202,40 @@ def _smooth_transforms(
     return smoothed
 
 
+def _derive_stabilization_transforms(
+    raw_transforms: List[np.ndarray], smoothness: float
+) -> List[np.ndarray]:
+    smoothed_transforms = _smooth_transforms(raw_transforms, smoothness)
+    stabilization_transforms: List[np.ndarray] = []
+    for raw, smooth in zip(raw_transforms, smoothed_transforms):
+        try:
+            correction = smooth @ np.linalg.inv(raw)
+        except np.linalg.LinAlgError:
+            correction = np.eye(3, dtype=np.float64)
+        if not np.isfinite(correction).all():
+            correction = np.eye(3, dtype=np.float64)
+        stabilization_transforms.append(correction)
+    return stabilization_transforms
+
+
+def _compute_base_masks(
+    transforms: List[np.ndarray], width: int, height: int
+) -> List[np.ndarray]:
+    base_masks: List[np.ndarray] = []
+    identity_mask = np.ones((height, width), dtype=np.float32)
+    for transform in transforms:
+        mask = cv2.warpPerspective(
+            identity_mask,
+            transform,
+            (width, height),
+            flags=cv2.INTER_NEAREST,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0.0,
+        )
+        base_masks.append(np.clip(mask, 0.0, 1.0))
+    return base_masks
+
+
 def _zoom_matrix(factor: float, width: int, height: int) -> np.ndarray:
     cx = width / 2.0
     cy = height / 2.0
@@ -313,11 +323,11 @@ class VideoStabilizerNode(io.ComfyNode):
                     display_name="Framing",
                     tooltip="Choose how to treat missing borders after stabilization.",
                 ),
-                RGBColor.Input(
+                io.String.Input(
                     "pad_color_rgb",
                     display_name="Padding Color",
-                    default=(128, 128, 128),
-                    tooltip="Color used to fill missing areas when padding is required.",
+                    default="128,128,128",
+                    tooltip="Color used to fill missing areas when padding is required (comma-separated R,G,B like 244,124,5).",
                 ),
             ],
             outputs=[
@@ -347,9 +357,12 @@ class VideoStabilizerNode(io.ComfyNode):
             return io.NodeOutput(frames, mask)
 
         numpy_frames = _tensor_to_numpy(frames)
-        grayscale_frames = [
-            cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY) for frame in numpy_frames
-        ]
+        grayscale_frames: List[np.ndarray] = []
+        for frame in numpy_frames:
+            gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+            if gray.dtype != np.uint8:
+                gray = np.clip(gray * 255.0, 0.0, 255.0).astype(np.uint8)
+            grayscale_frames.append(gray)
 
         raw_transforms = [np.eye(3, dtype=np.float64)]
         for index in range(1, frame_count):
@@ -363,46 +376,48 @@ class VideoStabilizerNode(io.ComfyNode):
                 combined = raw_transforms[-1]
             raw_transforms.append(combined)
 
-        smoothed_transforms = _smooth_transforms(raw_transforms, smoothness)
-        stabilization_transforms: List[np.ndarray] = []
-        for raw, smooth in zip(raw_transforms, smoothed_transforms):
-            try:
-                correction = smooth @ np.linalg.inv(raw)
-            except np.linalg.LinAlgError:
-                correction = np.eye(3, dtype=np.float64)
-            if not np.isfinite(correction).all():
-                correction = np.eye(3, dtype=np.float64)
-            stabilization_transforms.append(correction)
-
-        base_masks: List[np.ndarray] = []
-        for frame, transform in zip(numpy_frames, stabilization_transforms):
-            mask = cv2.warpPerspective(
-                np.ones((height, width), dtype=np.float32),
-                transform,
-                (width, height),
-                flags=cv2.INTER_NEAREST,
-                borderMode=cv2.BORDER_CONSTANT,
-                borderValue=0.0,
-            )
-            base_masks.append(np.clip(mask, 0.0, 1.0))
-
+        smoothness_target = float(np.clip(smoothness, 0.0, 1.0))
+        smoothness_current = smoothness_target
+        framing_mode = str(framing).upper()
         zoom_clamped = float(np.clip(stabilize_zoom, 0.0, 1.0))
         max_zoom = 1.0 + zoom_clamped
-        zoom_needed = [
-            _compute_zoom_needed(_mask_to_box(mask), width, height)
-            for mask in base_masks
-        ]
 
-        framing = framing.upper()
-        if framing == "CROP":
+        stabilization_transforms: List[np.ndarray] = []
+        base_masks: List[np.ndarray] = []
+        zoom_needed: List[float] = []
+        attempts_remaining = 6
+        while True:
+            stabilization_transforms = _derive_stabilization_transforms(
+                raw_transforms, smoothness_current
+            )
+            base_masks = _compute_base_masks(stabilization_transforms, width, height)
+            zoom_needed = [
+                _compute_zoom_needed(_mask_to_box(mask), width, height)
+                for mask in base_masks
+            ]
+            max_required_zoom = max(zoom_needed) if zoom_needed else 1.0
+            if (
+                framing_mode == "CROP"
+                and max_required_zoom > max_zoom + 1e-3
+                and smoothness_current > 0.0
+                and attempts_remaining > 0
+            ):
+                smoothness_current = max(0.0, smoothness_current * 0.5)
+                if smoothness_current < 1e-3:
+                    smoothness_current = 0.0
+                attempts_remaining -= 1
+                continue
+            break
+
+        if framing_mode == "CROP":
             effective_zoom = min(max(zoom_needed), max_zoom)
             zooms = [effective_zoom] * frame_count
-        elif framing == "CROP_AND_PAD" or framing == "CROP_and_PAD":
+        elif framing_mode == "CROP_AND_PAD":
             zooms = [min(value, max_zoom) for value in zoom_needed]
-            framing = "CROP_AND_PAD"
+            framing_mode = "CROP_AND_PAD"
         else:
             zooms = [1.0] * frame_count
-            framing = "NO_CROP_PAD"
+            framing_mode = "NO_CROP_PAD"
 
         pad_color = _parse_pad_color(pad_color_rgb)
         pad_color_normalized = tuple(channel / 255.0 for channel in pad_color)
@@ -432,7 +447,7 @@ class VideoStabilizerNode(io.ComfyNode):
             stabilized_frames.append(stabilized)
             stabilized_masks.append(mask)
 
-        if framing == "CROP":
+        if framing_mode == "CROP":
             intersection = np.ones_like(stabilized_masks[0], dtype=bool)
             for mask in stabilized_masks:
                 intersection &= mask >= MASK_THRESHOLD
@@ -457,12 +472,12 @@ class VideoStabilizerNode(io.ComfyNode):
         output_masks: List[np.ndarray] = []
         for frame, mask in zip(stabilized_frames, stabilized_masks):
             inverted = np.clip(1.0 - mask, 0.0, 1.0)
-            if framing != "CROP_AND_PAD":
+            if framing_mode != "CROP_AND_PAD":
                 inverted = inverted  # NO_CROP_PAD keeps mask as-is
             missing = inverted > 0.0
             if missing.any():
                 frame = frame.copy()
-                frame[missing[..., None]] = pad_color_normalized
+                frame[missing] = pad_color_normalized
             filled_frames.append(frame)
             output_masks.append(inverted)
 
@@ -479,4 +494,3 @@ class VideoStabilizerExtension(ComfyExtension):
 
 async def comfy_entrypoint() -> VideoStabilizerExtension:
     return VideoStabilizerExtension()
-

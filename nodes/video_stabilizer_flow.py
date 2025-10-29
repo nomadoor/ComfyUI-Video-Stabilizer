@@ -43,6 +43,21 @@ def _numpy_to_tensor(frames: np.ndarray, reference: torch.Tensor) -> torch.Tenso
     return tensor.contiguous()
 
 
+def _prepare_gray_sequences(
+    frames: np.ndarray,
+) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+    frames_clipped = np.clip(frames, 0.0, 1.0)
+    frames_u8 = (frames_clipped * 255.0).round().astype(np.uint8)
+    gray_u8 = [
+        cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY).astype(np.uint8) for frame in frames_u8
+    ]
+    frames_f32 = frames_clipped.astype(np.float32)
+    gray_f32 = [
+        cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY).astype(np.float32) for frame in frames_f32
+    ]
+    return gray_u8, gray_f32
+
+
 def _mask_to_box(mask: np.ndarray) -> BoundingBox:
     valid = mask >= MASK_THRESHOLD
     if not np.any(valid):
@@ -284,17 +299,6 @@ def _feather_mask(mask: np.ndarray, radius: int) -> np.ndarray:
     return cv2.GaussianBlur(mask.astype(np.float32), (ksize, ksize), 0)
 
 
-def _select_device(use_gpu: str) -> torch.device:
-    use_gpu = use_gpu.lower()
-    if use_gpu == "force_gpu":
-        if not torch.cuda.is_available():
-            raise RuntimeError("GPU requested but CUDA is unavailable.")
-        return torch.device("cuda")
-    if use_gpu == "force_cpu":
-        return torch.device("cpu")
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
 def _create_flow_backend(name: str, pyramid_levels: int):
     name = name.lower()
     if name == "dis":
@@ -418,25 +422,30 @@ class VideoStabilizerFlowNode(io.ComfyNode):
             )
             return io.NodeOutput(frames, mask, None)
 
-        device = _select_device(use_gpu)
         numpy_frames = _tensor_to_numpy(frames)
-        grayscale_frames = [
-            cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY) for frame in numpy_frames
-        ]
+        frames_linear = np.clip(numpy_frames, 0.0, 1.0)
+        gray_u8, gray_f32 = _prepare_gray_sequences(frames_linear)
 
+        backend_lower = flow_backend.lower()
         flow_calc = _create_flow_backend(flow_backend, pyramid_levels)
         flows: List[np.ndarray] = []
         for idx in range(1, frame_count):
-            prev = grayscale_frames[idx - 1]
-            curr = grayscale_frames[idx]
-            if flow_backend.lower() == "dis":
-                flow = flow_calc.calc(prev, curr, None)
+            if backend_lower == "dis":
+                prev = np.ascontiguousarray(gray_u8[idx - 1])
+                curr = np.ascontiguousarray(gray_u8[idx])
             else:
+                prev = np.ascontiguousarray(gray_f32[idx - 1])
+                curr = np.ascontiguousarray(gray_f32[idx])
+            try:
                 flow = flow_calc.calc(prev, curr, None)
-            flows.append(flow.astype(np.float32))
+            except cv2.error:
+                flow = None
+            if flow is None or flow.size == 0:
+                flow = np.zeros((prev.shape[0], prev.shape[1], 2), dtype=np.float32)
+            flows.append(flow.astype(np.float32, copy=False))
 
-        height, width = numpy_frames.shape[1], numpy_frames.shape[2]
-        step = max(4, min(height, width) // 60)
+        height, width = frames_linear.shape[1], frames_linear.shape[2]
+        step = max(4, max(1, min(height, width) // 60))
 
         raw_transforms: List[np.ndarray] = [np.eye(3, dtype=np.float64)]
         translations = []
@@ -487,7 +496,7 @@ class VideoStabilizerFlowNode(io.ComfyNode):
         stabilized_frames: List[np.ndarray] = []
         stabilized_masks: List[np.ndarray] = []
         for idx, (frame, transform) in enumerate(
-            zip(numpy_frames, stabilization_transforms)
+            zip(frames_linear, stabilization_transforms)
         ):
             zoom = min(zoom_needed[idx], max_zoom)
             zoom_matrix = _zoom_matrix(zoom, width, height)

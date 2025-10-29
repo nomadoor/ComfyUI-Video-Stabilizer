@@ -12,6 +12,8 @@ import torch
 from typing_extensions import override
 
 from comfy_api.latest import ComfyExtension, io
+from comfy_execution.utils import get_executing_context
+from comfy_execution.progress import get_progress_state
 
 DEFAULT_FPS = 30.0
 MIN_FEATURES = 12
@@ -593,9 +595,14 @@ class VideoStabilizerNode(io.ComfyNode):
         if framing_mode == "CROP":
             image_border_mode = cv2.BORDER_REPLICATE
 
+        executing_context = get_executing_context()
+        progress_node_id = getattr(executing_context, "node_id", None)
+
         stabilized_frames: List[np.ndarray] = []
         stabilized_masks: List[np.ndarray] = []
-        for frame, transform, zoom in zip(numpy_frames, stabilization_transforms, zooms):
+        for idx, (frame, transform, zoom) in enumerate(
+            zip(numpy_frames, stabilization_transforms, zooms)
+        ):
             zoom_matrix = _zoom_matrix(zoom, width, height)
             full_transform = zoom_matrix @ transform
             stabilized = cv2.warpPerspective(
@@ -617,6 +624,12 @@ class VideoStabilizerNode(io.ComfyNode):
             mask = np.clip(mask, 0.0, 1.0)
             stabilized_frames.append(stabilized)
             stabilized_masks.append(mask)
+            if progress_node_id is not None:
+                get_progress_state().update_progress(
+                    node_id=progress_node_id,
+                    value=idx + 1,
+                    max_value=frame_count,
+                )
 
         if framing_mode == "CROP":
             intersection = np.ones_like(stabilized_masks[0], dtype=bool)
@@ -637,6 +650,12 @@ class VideoStabilizerNode(io.ComfyNode):
             ]
             frames_tensor = _numpy_to_tensor(np.stack(cropped_frames, axis=0), frames)
             mask_tensor = _numpy_to_tensor(np.stack(output_mask, axis=0), frames)
+            if progress_node_id is not None:
+                get_progress_state().update_progress(
+                    node_id=progress_node_id,
+                    value=frame_count,
+                    max_value=frame_count,
+                )
             return io.NodeOutput(frames_tensor, mask_tensor)
 
         filled_frames: List[np.ndarray] = []
@@ -652,6 +671,12 @@ class VideoStabilizerNode(io.ComfyNode):
 
         frames_tensor = _numpy_to_tensor(np.stack(filled_frames, axis=0), frames)
         mask_tensor = _numpy_to_tensor(np.stack(output_masks, axis=0), frames)
+        if progress_node_id is not None:
+            get_progress_state().update_progress(
+                node_id=progress_node_id,
+                value=frame_count,
+                max_value=frame_count,
+            )
         return io.NodeOutput(frames_tensor, mask_tensor)
 
 

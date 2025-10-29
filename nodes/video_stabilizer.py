@@ -11,7 +11,7 @@ import numpy as np
 import torch
 from typing_extensions import override
 
-from comfy_api.latest import ComfyExtension, io
+from comfy_api.latest import io
 from comfy_execution.utils import get_executing_context
 from comfy_execution.progress import get_progress_state
 
@@ -680,11 +680,3 @@ class VideoStabilizerNode(io.ComfyNode):
         return io.NodeOutput(frames_tensor, mask_tensor)
 
 
-class VideoStabilizerExtension(ComfyExtension):
-    @override
-    async def get_node_list(self) -> List[type[io.ComfyNode]]:
-        return [VideoStabilizerNode]
-
-
-async def comfy_entrypoint() -> VideoStabilizerExtension:
-    return VideoStabilizerExtension()

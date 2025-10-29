@@ -448,7 +448,7 @@ class VideoStabilizerNode(io.ComfyNode):
                 ),
                 io.Combo.Input(
                     "framing",
-                    options=["CROP", "CROP_and_PAD", "NO_CROP_PAD"],
+                    options=["CROP", "CROP_and_PAD"],
                     default="CROP_and_PAD",
                     display_name="Framing",
                     tooltip="Choose how to treat missing borders after stabilization.",
@@ -508,7 +508,7 @@ class VideoStabilizerNode(io.ComfyNode):
             raw_transforms.append(_enforce_motion_model(combined, method))
 
         smoothness_target = float(np.clip(smoothness, 0.0, 1.0))
-        framing_mode = str(framing).upper()
+        framing_mode = "CROP" if str(framing).upper() == "CROP" else "CROP_AND_PAD"
         zoom_clamped = float(np.clip(stabilize_zoom, 0.0, 1.0))
         max_zoom = 1.0 + zoom_clamped
 
@@ -603,12 +603,8 @@ class VideoStabilizerNode(io.ComfyNode):
         if framing_mode == "CROP":
             effective_zoom = min(max(zoom_needed), max_zoom)
             zooms = [effective_zoom] * frame_count
-        elif framing_mode == "CROP_AND_PAD":
-            zooms = [min(value, max_zoom) for value in zoom_needed]
-            framing_mode = "CROP_AND_PAD"
         else:
-            zooms = [1.0] * frame_count
-            framing_mode = "NO_CROP_PAD"
+            zooms = [min(value, max_zoom) for value in zoom_needed]
 
         if zooms:
             print(
@@ -673,8 +669,6 @@ class VideoStabilizerNode(io.ComfyNode):
         output_masks: List[np.ndarray] = []
         for frame, mask in zip(stabilized_frames, stabilized_masks):
             inverted = np.clip(1.0 - mask, 0.0, 1.0)
-            if framing_mode != "CROP_AND_PAD":
-                inverted = inverted  # NO_CROP_PAD keeps mask as-is
             missing = inverted > 0.0
             if missing.any():
                 frame = frame.copy()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Iterable, List, Sequence, Tuple
+import math
 
 import cv2
 import numpy as np
@@ -11,8 +12,6 @@ import torch
 from typing_extensions import override
 
 from comfy_api.latest import ComfyExtension, io
-
-from .utils.oneeuro import OneEuroFilter
 
 DEFAULT_FPS = 30.0
 MIN_FEATURES = 12
@@ -162,62 +161,6 @@ def _estimate_transform(
     return np.eye(3, dtype=np.float64)
 
 
-def _matrix_to_vector(matrix: np.ndarray) -> np.ndarray:
-    return np.array(
-        [
-            matrix[0, 0],
-            matrix[0, 1],
-            matrix[0, 2],
-            matrix[1, 0],
-            matrix[1, 1],
-            matrix[1, 2],
-            matrix[2, 0],
-            matrix[2, 1],
-        ],
-        dtype=np.float64,
-    )
-
-
-def _vector_to_matrix(vector: np.ndarray) -> np.ndarray:
-    matrix = np.eye(3, dtype=np.float64)
-    matrix[0, 0], matrix[0, 1], matrix[0, 2] = vector[0], vector[1], vector[2]
-    matrix[1, 0], matrix[1, 1], matrix[1, 2] = vector[3], vector[4], vector[5]
-    matrix[2, 0], matrix[2, 1] = vector[6], vector[7]
-    return matrix
-
-
-def _smooth_transforms(
-    transforms: List[np.ndarray], smoothness: float
-) -> List[np.ndarray]:
-    smoothness_clamped = float(np.clip(smoothness, 0.0, 1.0))
-    min_cutoff = 0.1 + (1.0 - smoothness_clamped) * 3.9
-    beta = 0.05 + (1.0 - smoothness_clamped) * 0.45
-    filter_ = OneEuroFilter(DEFAULT_FPS, min_cutoff=min_cutoff, beta=beta)
-
-    smoothed = []
-    for matrix in transforms:
-        vector = _matrix_to_vector(matrix)
-        filtered_vector = filter_(vector)
-        smoothed.append(_vector_to_matrix(filtered_vector))
-    return smoothed
-
-
-def _derive_stabilization_transforms(
-    raw_transforms: List[np.ndarray], smoothness: float
-) -> List[np.ndarray]:
-    smoothed_transforms = _smooth_transforms(raw_transforms, smoothness)
-    stabilization_transforms: List[np.ndarray] = []
-    for raw, smooth in zip(raw_transforms, smoothed_transforms):
-        try:
-            correction = smooth @ np.linalg.inv(raw)
-        except np.linalg.LinAlgError:
-            correction = np.eye(3, dtype=np.float64)
-        if not np.isfinite(correction).all():
-            correction = np.eye(3, dtype=np.float64)
-        stabilization_transforms.append(correction)
-    return stabilization_transforms
-
-
 def _compute_base_masks(
     transforms: List[np.ndarray], width: int, height: int
 ) -> List[np.ndarray]:
@@ -234,6 +177,193 @@ def _compute_base_masks(
         )
         base_masks.append(np.clip(mask, 0.0, 1.0))
     return base_masks
+
+
+def _params_from_matrix(matrix: np.ndarray, method: str) -> np.ndarray:
+    method = method.lower()
+    if method == "translation":
+        return np.array([matrix[0, 2], matrix[1, 2]], dtype=np.float64)
+    if method == "similarity":
+        tx, ty = matrix[0, 2], matrix[1, 2]
+        theta = math.atan2(matrix[1, 0], matrix[0, 0])
+        scale = math.sqrt(matrix[0, 0] ** 2 + matrix[1, 0] ** 2)
+        return np.array([tx, ty, theta, math.log(max(scale, 1e-6))], dtype=np.float64)
+    # perspective -> treat as similarity + projective tail
+    tx, ty = matrix[0, 2], matrix[1, 2]
+    theta = math.atan2(matrix[1, 0], matrix[0, 0])
+    scale = math.sqrt(matrix[0, 0] ** 2 + matrix[1, 0] ** 2)
+    hx, hy = matrix[2, 0], matrix[2, 1]
+    return np.array(
+        [tx, ty, theta, math.log(max(scale, 1e-6)), hx, hy], dtype=np.float64
+    )
+
+
+def _matrix_from_params(params: np.ndarray, method: str) -> np.ndarray:
+    method = method.lower()
+    if method == "translation":
+        tx, ty = params
+        matrix = np.eye(3, dtype=np.float64)
+        matrix[0, 2] = tx
+        matrix[1, 2] = ty
+        return matrix
+
+    if method == "similarity":
+        tx, ty, theta, log_scale = params
+        scale = math.exp(log_scale)
+        cos_t = math.cos(theta)
+        sin_t = math.sin(theta)
+        matrix = np.array(
+            [
+                [scale * cos_t, -scale * sin_t, tx],
+                [scale * sin_t, scale * cos_t, ty],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=np.float64,
+        )
+        return matrix
+
+    # perspective
+    tx, ty, theta, log_scale, hx, hy = params
+    matrix = _matrix_from_params(np.array([tx, ty, theta, log_scale]), "similarity")
+    matrix[2, 0] = hx
+    matrix[2, 1] = hy
+    return matrix
+
+
+def _smooth_params_sequence(
+    params_list: List[np.ndarray], smoothness: float, method: str
+) -> List[np.ndarray]:
+    if not params_list:
+        return params_list
+    smoothness_clamped = float(np.clip(smoothness, 0.0, 1.0))
+    if smoothness_clamped <= 0.0:
+        return [params.copy() for params in params_list]
+
+    params = np.stack(params_list, axis=0)
+    method = method.lower()
+    if method in ("similarity", "perspective"):
+        params[:, 2] = np.unwrap(params[:, 2])
+
+    radius = max(1, int(round(3 + smoothness_clamped * 45)))
+    sigma = radius / 2.0
+    offsets = np.arange(-radius, radius + 1, dtype=np.float64)
+    kernel = np.exp(-0.5 * (offsets / max(sigma, 1e-6)) ** 2)
+    kernel /= kernel.sum()
+    print(
+        "[VideoStabilizer] smoothing kernel "
+        f"radius={radius} sigma={sigma:.2f} dims={params.shape[1]} method={method}"
+    )
+
+    padded = np.pad(params, ((radius, radius), (0, 0)), mode="edge")
+    smoothed_array = np.empty_like(params)
+    for dim in range(params.shape[1]):
+        smoothed_array[:, dim] = np.convolve(padded[:, dim], kernel, mode="valid")
+
+    smoothed_array[0] = params[0]
+    if method in ("similarity", "perspective"):
+        smoothed_array[:, 2] = np.unwrap(smoothed_array[:, 2])
+    return [smoothed_array[i].copy() for i in range(smoothed_array.shape[0])]
+
+
+def _blend_params(
+    raw_params: List[np.ndarray], target_params: List[np.ndarray], alpha: float
+) -> List[np.ndarray]:
+    alpha = float(np.clip(alpha, 0.0, 1.0))
+    blended: List[np.ndarray] = []
+    for raw, smooth in zip(raw_params, target_params):
+        blended.append(raw + alpha * (smooth - raw))
+    if blended:
+        blended[0] = raw_params[0]
+    return blended
+
+
+def _enforce_motion_model(matrix: np.ndarray, method: str) -> np.ndarray:
+    corrected = matrix.astype(np.float64, copy=True)
+    if abs(corrected[2, 2]) > 1e-9:
+        corrected /= corrected[2, 2]
+    corrected[2, 2] = 1.0
+    method = method.lower()
+
+    if method == "translation":
+        corrected[0, 0] = 1.0
+        corrected[0, 1] = 0.0
+        corrected[1, 0] = 0.0
+        corrected[1, 1] = 1.0
+        corrected[2, 0] = 0.0
+        corrected[2, 1] = 0.0
+        return corrected
+
+    if method == "similarity":
+        a, b, c, d = corrected[0, 0], corrected[0, 1], corrected[1, 0], corrected[1, 1]
+        scale_col0 = math.hypot(a, c)
+        scale_col1 = math.hypot(b, d)
+        scale = max(1e-6, (scale_col0 + scale_col1) * 0.5)
+        theta = math.atan2(c, a)
+        corrected[0, 0] = scale * math.cos(theta)
+        corrected[0, 1] = -scale * math.sin(theta)
+        corrected[1, 0] = scale * math.sin(theta)
+        corrected[1, 1] = scale * math.cos(theta)
+        corrected[2, 0] = 0.0
+        corrected[2, 1] = 0.0
+        return corrected
+
+    # perspective: clamp projective terms and excessive scale drift
+    corrected = corrected / max(1e-6, corrected[2, 2])
+    corrected[2, 0] = float(np.clip(corrected[2, 0], -0.0015, 0.0015))
+    corrected[2, 1] = float(np.clip(corrected[2, 1], -0.0015, 0.0015))
+    linear = corrected[:2, :2]
+    u, s, vh = np.linalg.svd(linear)
+    s_clamped = np.clip(s, 0.3, 3.0)
+    corrected[:2, :2] = (u * s_clamped) @ vh
+    return corrected
+
+
+def _build_stabilization_transforms(
+    raw_transforms: List[np.ndarray],
+    raw_params: List[np.ndarray],
+    smoothed_params: List[np.ndarray],
+    method: str,
+    width: int,
+    height: int,
+) -> Tuple[List[np.ndarray], List[np.ndarray], List[np.ndarray], List[float]]:
+    smoothed_mats = [
+        _enforce_motion_model(_matrix_from_params(params, method), method)
+        for params in smoothed_params
+    ]
+    stabilization_transforms: List[np.ndarray] = []
+    for raw, smooth in zip(raw_transforms, smoothed_mats):
+        try:
+            correction = smooth @ np.linalg.inv(raw)
+        except np.linalg.LinAlgError:
+            correction = np.eye(3, dtype=np.float64)
+        if not np.isfinite(correction).all():
+            correction = np.eye(3, dtype=np.float64)
+        stabilization_transforms.append(_enforce_motion_model(correction, method))
+
+    base_masks = _compute_base_masks(stabilization_transforms, width, height)
+    zoom_needed = [
+        _compute_zoom_needed(_mask_to_box(mask), width, height) for mask in base_masks
+    ]
+    return stabilization_transforms, smoothed_mats, base_masks, zoom_needed
+
+
+def _log_trajectory(label: str, transforms: List[np.ndarray]) -> None:
+    if not transforms:
+        print(f"[VideoStabilizer][{label}] no transforms")
+        return
+    translations = [float(np.linalg.norm(mat[:2, 2])) for mat in transforms]
+    linear_deviation = [
+        float(np.linalg.norm(mat[:2, :2] - np.eye(2), ord="fro")) for mat in transforms
+    ]
+    perspective_terms = [
+        float(abs(mat[2, 0]) + abs(mat[2, 1])) for mat in transforms
+    ]
+    print(
+        f"[VideoStabilizer][{label}] frames={len(transforms)} "
+        f"translation(mean/max)={np.mean(translations):.4f}/{np.max(translations):.4f} "
+        f"linear_dev(max)={np.max(linear_deviation):.4f} "
+        f"perspective(max)={np.max(perspective_terms):.6f}"
+    )
 
 
 def _zoom_matrix(factor: float, width: int, height: int) -> np.ndarray:
@@ -351,6 +481,7 @@ class VideoStabilizerNode(io.ComfyNode):
 
         frame_count = frames.shape[0]
         height, width = int(frames.shape[1]), int(frames.shape[2])
+        method = str(method).lower()
 
         if frame_count <= 1:
             mask = torch.zeros((frame_count, height, width), dtype=frames.dtype, device=frames.device)
@@ -374,40 +505,100 @@ class VideoStabilizerNode(io.ComfyNode):
             combined = raw_transforms[-1] @ transform
             if not np.isfinite(combined).all() or abs(np.linalg.det(combined)) < 1e-6:
                 combined = raw_transforms[-1]
-            raw_transforms.append(combined)
+            raw_transforms.append(_enforce_motion_model(combined, method))
 
         smoothness_target = float(np.clip(smoothness, 0.0, 1.0))
-        smoothness_current = smoothness_target
         framing_mode = str(framing).upper()
         zoom_clamped = float(np.clip(stabilize_zoom, 0.0, 1.0))
         max_zoom = 1.0 + zoom_clamped
 
-        stabilization_transforms: List[np.ndarray] = []
-        base_masks: List[np.ndarray] = []
-        zoom_needed: List[float] = []
-        attempts_remaining = 6
-        while True:
-            stabilization_transforms = _derive_stabilization_transforms(
-                raw_transforms, smoothness_current
+        raw_params = [_params_from_matrix(mat, method) for mat in raw_transforms]
+        smoothed_params = _smooth_params_sequence(raw_params, smoothness_target, method)
+
+        _log_trajectory("raw-cumulative", raw_transforms)
+
+        if method == "translation":
+            (
+                stabilization_transforms,
+                smoothed_mats,
+                base_masks,
+                zoom_needed,
+            ) = _build_stabilization_transforms(
+                raw_transforms,
+                raw_params,
+                smoothed_params,
+                method,
+                width,
+                height,
             )
-            base_masks = _compute_base_masks(stabilization_transforms, width, height)
-            zoom_needed = [
-                _compute_zoom_needed(_mask_to_box(mask), width, height)
-                for mask in base_masks
-            ]
             max_required_zoom = max(zoom_needed) if zoom_needed else 1.0
-            if (
-                framing_mode == "CROP"
-                and max_required_zoom > max_zoom + 1e-3
-                and smoothness_current > 0.0
-                and attempts_remaining > 0
-            ):
-                smoothness_current = max(0.0, smoothness_current * 0.5)
-                if smoothness_current < 1e-3:
-                    smoothness_current = 0.0
-                attempts_remaining -= 1
-                continue
-            break
+        else:
+            attempt = 0
+            max_required_zoom = 1.0
+            stabilization_transforms = []
+            base_masks = []
+            zoom_needed = []
+            smoothed_mats = []
+
+            working_smoothed = smoothed_params
+            while attempt < 6:
+                (
+                    stabilization_transforms,
+                    smoothed_mats,
+                    base_masks,
+                    zoom_needed,
+                ) = _build_stabilization_transforms(
+                    raw_transforms,
+                    raw_params,
+                    working_smoothed,
+                    method,
+                    width,
+                    height,
+                )
+                max_required_zoom = max(zoom_needed) if zoom_needed else 1.0
+                if max_required_zoom <= max_zoom + 1e-3 or smoothness_target <= 0.0:
+                    smoothed_params = working_smoothed
+                    break
+                blend = min(1.0, max_zoom / (max_required_zoom + 1e-6))
+                print(
+                    "[VideoStabilizer] smoothing/zoom adjustment "
+                    f"attempt={attempt + 1} blend={blend:.3f} required_zoom={max_required_zoom:.3f} "
+                    f"allowed={max_zoom:.3f}"
+                )
+                working_smoothed = _blend_params(raw_params, working_smoothed, blend)
+                attempt += 1
+
+            if max_required_zoom > max_zoom + 1e-3:
+                print(
+                    "[VideoStabilizer] unable to stay within zoom budget; falling back to raw trajectory"
+                )
+                (
+                    stabilization_transforms,
+                    smoothed_mats,
+                    base_masks,
+                    zoom_needed,
+                ) = _build_stabilization_transforms(
+                    raw_transforms,
+                    raw_params,
+                    raw_params,
+                    method,
+                    width,
+                    height,
+                )
+                max_required_zoom = max(zoom_needed) if zoom_needed else 1.0
+                smoothed_params = raw_params
+            else:
+                smoothed_params = working_smoothed
+
+        _log_trajectory("smoothed", smoothed_mats)
+        _log_trajectory("stabilization", stabilization_transforms)
+        print(
+            "[VideoStabilizer] summary "
+            f"frames={frame_count} method={method} "
+            f"smoothness_target={smoothness_target:.3f} "
+            f"max_zoom_needed={max_required_zoom:.3f} user_allowance={max_zoom:.3f} "
+            f"framing={framing_mode}"
+        )
 
         if framing_mode == "CROP":
             effective_zoom = min(max(zoom_needed), max_zoom)
@@ -419,8 +610,18 @@ class VideoStabilizerNode(io.ComfyNode):
             zooms = [1.0] * frame_count
             framing_mode = "NO_CROP_PAD"
 
+        if zooms:
+            print(
+                "[VideoStabilizer] zoom stats "
+                f"min={min(zooms):.3f} max={max(zooms):.3f} mean={np.mean(zooms):.3f}"
+            )
+
         pad_color = _parse_pad_color(pad_color_rgb)
         pad_color_normalized = tuple(channel / 255.0 for channel in pad_color)
+        image_border_mode = cv2.BORDER_CONSTANT
+        image_border_value = pad_color_normalized
+        if framing_mode == "CROP":
+            image_border_mode = cv2.BORDER_REPLICATE
 
         stabilized_frames: List[np.ndarray] = []
         stabilized_masks: List[np.ndarray] = []
@@ -432,8 +633,8 @@ class VideoStabilizerNode(io.ComfyNode):
                 full_transform,
                 (width, height),
                 flags=cv2.INTER_LINEAR,
-                borderMode=cv2.BORDER_CONSTANT,
-                borderValue=pad_color_normalized,
+                borderMode=image_border_mode,
+                borderValue=image_border_value,
             )
             mask = cv2.warpPerspective(
                 np.ones((height, width), dtype=np.float32),

@@ -1,0 +1,17 @@
+# Byte-compiled / optimized files
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+.env/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+
+# Local agent state
+.serena/
+
+# Logs
+*.log

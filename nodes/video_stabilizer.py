@@ -428,7 +428,7 @@ class VideoStabilizerNode(io.ComfyNode):
                 ),
                 io.Float.Input(
                     "smoothness",
-                    default=0.25,
+                    default=0.5,
                     min=0.0,
                     max=1.0,
                     step=0.01,
@@ -438,7 +438,7 @@ class VideoStabilizerNode(io.ComfyNode):
                 ),
                 io.Float.Input(
                     "stabilize_zoom",
-                    default=0.35,
+                    default=0.5,
                     min=0.0,
                     max=1.0,
                     step=0.01,

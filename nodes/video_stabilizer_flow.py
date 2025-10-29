@@ -173,6 +173,18 @@ def _smooth_params_sequence(
     return [smoothed_array[i].copy() for i in range(smoothed_array.shape[0])]
 
 
+def _blend_params(
+    raw_params: List[np.ndarray], target_params: List[np.ndarray], alpha: float
+) -> List[np.ndarray]:
+    alpha = float(np.clip(alpha, 0.0, 1.0))
+    blended: List[np.ndarray] = []
+    for raw, target in zip(raw_params, target_params):
+        blended.append(raw + alpha * (target - raw))
+    if blended:
+        blended[0] = raw_params[0]
+    return blended
+
+
 def _enforce_motion_model(matrix: np.ndarray, method: str) -> np.ndarray:
     corrected = matrix.astype(np.float64, copy=True)
     if abs(corrected[2, 2]) > 1e-9:
@@ -447,23 +459,74 @@ class VideoStabilizerFlowNode(io.ComfyNode):
 
         raw_params = [_params_from_matrix(mat, method) for mat in raw_transforms]
         smooth_params = _smooth_params_sequence(raw_params, smoothness, method)
-        (
-            stabilization_transforms,
-            _smoothed_mats,
-            _base_masks,
-            zoom_needed,
-        ) = _build_stabilization_transforms(
-            raw_transforms,
-            raw_params,
-            smooth_params,
-            method,
-            width,
-            height,
-        )
-
-        max_zoom = 1.0 + float(np.clip(stabilize_zoom, 0.0, 1.0))
+        smoothness_target = float(np.clip(smoothness, 0.0, 1.0))
         framing_mode = str(framing).upper()
-        max_zoom_needed = max(zoom_needed) if zoom_needed else 1.0
+        max_zoom = 1.0 + float(np.clip(stabilize_zoom, 0.0, 1.0))
+
+        if framing_mode == "CROP":
+            attempt = 0
+            max_zoom_needed = 1.0
+            stabilization_transforms: List[np.ndarray] = []
+            base_masks: List[np.ndarray] = []
+            zoom_needed: List[float] = []
+            smoothed_mats: List[np.ndarray] = []
+            working_smoothed = smooth_params
+            while attempt < 6:
+                (
+                    stabilization_transforms,
+                    smoothed_mats,
+                    base_masks,
+                    zoom_needed,
+                ) = _build_stabilization_transforms(
+                    raw_transforms,
+                    raw_params,
+                    working_smoothed,
+                    method,
+                    width,
+                    height,
+                )
+                max_zoom_needed = max(zoom_needed) if zoom_needed else 1.0
+                if max_zoom_needed <= max_zoom + 1e-3 or smoothness_target <= 0.0:
+                    smooth_params = working_smoothed
+                    break
+                blend = min(1.0, max_zoom / (max_zoom_needed + 1e-6))
+                working_smoothed = _blend_params(raw_params, working_smoothed, blend)
+                attempt += 1
+
+            if max_zoom_needed > max_zoom + 1e-3:
+                (
+                    stabilization_transforms,
+                    smoothed_mats,
+                    base_masks,
+                    zoom_needed,
+                ) = _build_stabilization_transforms(
+                    raw_transforms,
+                    raw_params,
+                    raw_params,
+                    method,
+                    width,
+                    height,
+                )
+                max_zoom_needed = max(zoom_needed) if zoom_needed else 1.0
+                smooth_params = raw_params
+            else:
+                smooth_params = working_smoothed
+        else:
+            (
+                stabilization_transforms,
+                smoothed_mats,
+                base_masks,
+                zoom_needed,
+            ) = _build_stabilization_transforms(
+                raw_transforms,
+                raw_params,
+                smooth_params,
+                method,
+                width,
+                height,
+            )
+            max_zoom_needed = max(zoom_needed) if zoom_needed else 1.0
+
         pad_color = _parse_pad_color(pad_color_rgb)
         pad_color_normalized = tuple(channel / 255.0 for channel in pad_color)
 
@@ -481,6 +544,11 @@ class VideoStabilizerFlowNode(io.ComfyNode):
 
         stabilized_frames: List[np.ndarray] = []
         stabilized_masks: List[np.ndarray] = []
+        border_mode = cv2.BORDER_CONSTANT
+        border_value = pad_color_normalized
+        if framing_mode == "CROP":
+            border_mode = cv2.BORDER_REPLICATE
+            border_value = pad_color_normalized  # unused by replicate, keeps signature explicit
         for idx, (frame, transform, zoom) in enumerate(
             zip(frames_linear, stabilization_transforms, zooms)
         ):
@@ -491,8 +559,8 @@ class VideoStabilizerFlowNode(io.ComfyNode):
                 full_transform,
                 (width, height),
                 flags=cv2.INTER_LINEAR,
-                borderMode=cv2.BORDER_CONSTANT,
-                borderValue=pad_color_normalized,
+                borderMode=border_mode,
+                borderValue=border_value,
             )
             mask = cv2.warpPerspective(
                 np.ones((height, width), dtype=np.float32),

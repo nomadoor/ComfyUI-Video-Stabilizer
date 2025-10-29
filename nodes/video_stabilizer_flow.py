@@ -301,7 +301,6 @@ def _create_flow_backend(name: str, pyramid_levels: int):
         dis = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_ULTRAFAST)
         dis.setUseMeanNormalization(True)
         dis.setFinestScale(0)
-        dis.setNumScales(max(1, pyramid_levels))
         return dis
     if not hasattr(cv2, "optflow") or not hasattr(cv2.optflow, "createOptFlow_DeepFlow"):
         raise RuntimeError(

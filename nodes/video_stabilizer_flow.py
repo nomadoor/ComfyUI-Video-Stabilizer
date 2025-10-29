@@ -389,7 +389,7 @@ class VideoStabilizerFlowNode(io.ComfyNode):
             outputs=[
                 io.Image.Output(display_name="stabilized_frames"),
                 io.Mask.Output(display_name="mask"),
-                io.String.Output(display_name="motion_debug", optional=True),
+                io.String.Output(display_name="motion_debug"),
             ],
         )
 

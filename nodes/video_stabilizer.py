@@ -532,7 +532,7 @@ class VideoStabilizerNode(io.ComfyNode):
                 height,
             )
             max_required_zoom = max(zoom_needed) if zoom_needed else 1.0
-        else:
+        elif framing_mode == "CROP":
             attempt = 0
             max_required_zoom = 1.0
             stabilization_transforms = []
@@ -589,6 +589,21 @@ class VideoStabilizerNode(io.ComfyNode):
                 smoothed_params = raw_params
             else:
                 smoothed_params = working_smoothed
+        else:
+            (
+                stabilization_transforms,
+                smoothed_mats,
+                base_masks,
+                zoom_needed,
+            ) = _build_stabilization_transforms(
+                raw_transforms,
+                raw_params,
+                smoothed_params,
+                method,
+                width,
+                height,
+            )
+            max_required_zoom = max(zoom_needed) if zoom_needed else 1.0
 
         _log_trajectory("smoothed", smoothed_mats)
         _log_trajectory("stabilization", stabilization_transforms)

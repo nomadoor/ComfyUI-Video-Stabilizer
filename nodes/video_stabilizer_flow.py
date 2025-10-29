@@ -400,9 +400,9 @@ class VideoStabilizerFlowNode(io.ComfyNode):
     def execute(
         cls,
         frames: torch.Tensor,
+        method: str,
         smoothness: float,
         stabilize_zoom: float,
-        method: str,
         framing: str,
         pad_color_rgb: str,
     ) -> io.NodeOutput:

@@ -41,19 +41,12 @@ def _numpy_to_tensor(frames: np.ndarray, reference: torch.Tensor) -> torch.Tenso
     return tensor.contiguous()
 
 
-def _prepare_gray_sequences(
-    frames: np.ndarray,
-) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+def _prepare_gray_u8(frames: np.ndarray) -> List[np.ndarray]:
     frames_clipped = np.clip(frames, 0.0, 1.0)
     frames_u8 = (frames_clipped * 255.0).round().astype(np.uint8)
-    gray_u8 = [
+    return [
         cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY).astype(np.uint8) for frame in frames_u8
     ]
-    frames_f32 = frames_clipped.astype(np.float32)
-    gray_f32 = [
-        cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY).astype(np.float32) for frame in frames_f32
-    ]
-    return gray_u8, gray_f32
 
 
 def _mask_to_box(mask: np.ndarray) -> BoundingBox:
@@ -94,6 +87,45 @@ def _compute_base_masks(
         )
         base_masks.append(np.clip(mask, 0.0, 1.0))
     return base_masks
+
+
+def _compute_dis_flow(
+    prev_gray: np.ndarray, curr_gray: np.ndarray
+) -> np.ndarray:
+    height, width = prev_gray.shape
+    longest = max(height, width)
+    if longest >= 1200:
+        scale = 0.5
+    elif longest >= 720:
+        scale = 0.6
+    else:
+        scale = 1.0
+
+    dis = cv2.DISOpticalFlow_create(
+        cv2.DISOPTICAL_FLOW_PRESET_MEDIUM if scale < 1.0 else cv2.DISOPTICAL_FLOW_PRESET_FAST
+    )
+    dis.setUseMeanNormalization(True)
+    dis.setFinestScale(0)
+
+    if scale < 1.0:
+        target_width = max(16, int(round(width * scale)))
+        target_height = max(16, int(round(height * scale)))
+        small_prev = cv2.resize(
+            prev_gray, (target_width, target_height), interpolation=cv2.INTER_AREA
+        )
+        small_curr = cv2.resize(
+            curr_gray, (target_width, target_height), interpolation=cv2.INTER_AREA
+        )
+        flow_small = dis.calc(small_prev, small_curr, None)
+        flow = cv2.resize(flow_small, (width, height), interpolation=cv2.INTER_LINEAR)
+        scale_x = width / max(1, flow_small.shape[1])
+        scale_y = height / max(1, flow_small.shape[0])
+        flow[:, :, 0] *= scale_x
+        flow[:, :, 1] *= scale_y
+        flow = cv2.GaussianBlur(flow, (3, 3), 0)
+    else:
+        flow = dis.calc(prev_gray, curr_gray, None)
+    return flow.astype(np.float32, copy=False)
 
 
 def _params_from_matrix(matrix: np.ndarray, method: str) -> np.ndarray:
@@ -302,21 +334,6 @@ def _build_stabilization_transforms(
     return stabilization_transforms, smoothed_mats, base_masks, zoom_needed
 
 
-def _create_flow_backend(name: str, pyramid_levels: int):
-    name = name.lower()
-    if name == "dis":
-        dis = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_ULTRAFAST)
-        dis.setUseMeanNormalization(True)
-        dis.setFinestScale(0)
-        return dis
-    if not hasattr(cv2, "optflow") or not hasattr(cv2.optflow, "createOptFlow_DeepFlow"):
-        raise RuntimeError(
-            "DeepFlow backend requires opencv-contrib-python with cv2.optflow available."
-        )
-    deepflow = cv2.optflow.createOptFlow_DeepFlow()
-    return deepflow
-
-
 class VideoStabilizerFlowNode(io.ComfyNode):
     @classmethod
     def define_schema(cls) -> io.Schema:
@@ -367,21 +384,6 @@ class VideoStabilizerFlowNode(io.ComfyNode):
                     display_name="Framing",
                     tooltip="Choose how to treat missing borders after stabilization.",
                 ),
-                io.Combo.Input(
-                    "flow_backend",
-                    options=["DIS", "DeepFlow"],
-                    default="DIS",
-                    display_name="Flow Backend",
-                    tooltip="Dense optical-flow solver: DIS is faster, DeepFlow is higher quality.",
-                ),
-                io.Int.Input(
-                    "pyramid_levels",
-                    default=5,
-                    min=1,
-                    max=10,
-                    display_name="Flow Pyramid Levels",
-                    tooltip="Number of multi-scale levels used by the dense optical-flow solver.",
-                ),
                 io.String.Input(
                     "pad_color_rgb",
                     default="128,128,128",
@@ -398,8 +400,6 @@ class VideoStabilizerFlowNode(io.ComfyNode):
     def execute(
         cls,
         frames: torch.Tensor,
-        flow_backend: str,
-        pyramid_levels: int,
         smoothness: float,
         stabilize_zoom: float,
         method: str,
@@ -420,29 +420,20 @@ class VideoStabilizerFlowNode(io.ComfyNode):
 
         numpy_frames = _tensor_to_numpy(frames)
         frames_linear = np.clip(numpy_frames, 0.0, 1.0)
-        gray_u8, gray_f32 = _prepare_gray_sequences(frames_linear)
+        gray_u8 = _prepare_gray_u8(frames_linear)
 
-        backend_lower = flow_backend.lower()
-        flow_calc = _create_flow_backend(flow_backend, pyramid_levels)
         flows: List[np.ndarray] = []
         for idx in range(1, frame_count):
-            if backend_lower == "dis":
-                prev = np.ascontiguousarray(gray_u8[idx - 1])
-                curr = np.ascontiguousarray(gray_u8[idx])
-            else:
-                prev = np.ascontiguousarray(gray_f32[idx - 1])
-                curr = np.ascontiguousarray(gray_f32[idx])
+            prev = np.ascontiguousarray(gray_u8[idx - 1])
+            curr = np.ascontiguousarray(gray_u8[idx])
             try:
-                flow = flow_calc.calc(prev, curr, None)
+                flow = _compute_dis_flow(prev, curr)
             except cv2.error:
-                flow = None
-            if flow is None or flow.size == 0:
                 flow = np.zeros((prev.shape[0], prev.shape[1], 2), dtype=np.float32)
             flows.append(flow.astype(np.float32, copy=False))
 
         height, width = frames_linear.shape[1], frames_linear.shape[2]
-        step_divisor = max(6, int(pyramid_levels) * 6)
-        step = max(4, max(1, min(height, width) // step_divisor))
+        step = max(4, max(1, min(height, width) // 60))
 
         raw_transforms: List[np.ndarray] = [np.eye(3, dtype=np.float64)]
 

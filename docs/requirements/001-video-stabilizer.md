@@ -7,7 +7,7 @@
   - Two intuitive sliders: **smoothness** and **stabilize_zoom**.
 
 ##01 ##id - Identification
-- ID: `001-video-stabilizer`
+- ID: `VideoStabilizerClassic`
 - Status: Draft
 - Updated: 2025-10-29
 - Repository: **ComfyUI-Video-Stabilizer**

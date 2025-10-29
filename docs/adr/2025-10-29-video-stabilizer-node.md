@@ -3,7 +3,7 @@
 - **Date:** 2025-10-29
 - **Status:** Accepted
 - **Context:** Requirement document `docs/requirements/001-video-stabilizer.md` calls for a classic CV video stabilization node that outputs both stabilized frames and a missing-area mask aligned with ComfyUI V3 schemas.
-- **Decision:** Implemented `VideoStabilizerNode` (ID `001-video-stabilizer`) using OpenCV feature tracking (GoodFeaturesToTrack with ORB fallback), LK optical flow, affine/homography estimation, and Gaussian-smoothed trajectory parameters. Final design exposes framing modes (`CROP`, `CROP_and_PAD`), per-frame masks, and progress bar updates via `comfy_execution.progress`.
+- **Decision:** Implemented `VideoStabilizerNode` (ID `VideoStabilizerClassic`) using OpenCV feature tracking (GoodFeaturesToTrack with ORB fallback), LK optical flow, affine/homography estimation, and Gaussian-smoothed trajectory parameters. Final design exposes framing modes (`CROP`, `CROP_and_PAD`), per-frame masks, and progress bar updates via `comfy_execution.progress`.
 - **Consequences:** Provides a CPU-friendly stabilization path without additional dependencies beyond OpenCV/NumPy. Downstream workflows receive a dedicated mask for outpainting and clear UI feedback during long jobs. NO_CROP_PAD was removed to reduce overlap with CROP_and_PAD. Default smoothing/zoom (0.5/0.5) deliver visible stabilization out of the box.
 
 ## 2025-10-29 Updates

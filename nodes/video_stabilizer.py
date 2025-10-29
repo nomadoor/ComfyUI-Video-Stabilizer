@@ -389,7 +389,7 @@ class VideoStabilizerNode(io.ComfyNode):
     @classmethod
     def define_schema(cls) -> io.Schema:
         return io.Schema(
-            node_id="001-video-stabilizer",
+            node_id="VideoStabilizerClassic",
             display_name="Video Stabilizer (Classic)",
             category="image/video",
             description=(

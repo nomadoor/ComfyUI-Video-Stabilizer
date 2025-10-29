@@ -1,0 +1,3 @@
+# Core numeric / CV stack required by the stabilizer node.
+numpy>=1.24
+opencv-python>=4.8

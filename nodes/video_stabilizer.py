@@ -249,11 +249,6 @@ def _smooth_params_sequence(
     offsets = np.arange(-radius, radius + 1, dtype=np.float64)
     kernel = np.exp(-0.5 * (offsets / max(sigma, 1e-6)) ** 2)
     kernel /= kernel.sum()
-    print(
-        "[VideoStabilizer] smoothing kernel "
-        f"radius={radius} sigma={sigma:.2f} dims={params.shape[1]} method={method}"
-    )
-
     padded = np.pad(params, ((radius, radius), (0, 0)), mode="edge")
     smoothed_array = np.empty_like(params)
     for dim in range(params.shape[1]):
@@ -348,22 +343,8 @@ def _build_stabilization_transforms(
 
 
 def _log_trajectory(label: str, transforms: List[np.ndarray]) -> None:
-    if not transforms:
-        print(f"[VideoStabilizer][{label}] no transforms")
-        return
-    translations = [float(np.linalg.norm(mat[:2, 2])) for mat in transforms]
-    linear_deviation = [
-        float(np.linalg.norm(mat[:2, :2] - np.eye(2), ord="fro")) for mat in transforms
-    ]
-    perspective_terms = [
-        float(abs(mat[2, 0]) + abs(mat[2, 1])) for mat in transforms
-    ]
-    print(
-        f"[VideoStabilizer][{label}] frames={len(transforms)} "
-        f"translation(mean/max)={np.mean(translations):.4f}/{np.max(translations):.4f} "
-        f"linear_dev(max)={np.max(linear_deviation):.4f} "
-        f"perspective(max)={np.max(perspective_terms):.6f}"
-    )
+    # Debug utility intentionally left blank; retained for future instrumentation if needed.
+    return
 
 
 def _zoom_matrix(factor: float, width: int, height: int) -> np.ndarray:
@@ -560,18 +541,10 @@ class VideoStabilizerNode(io.ComfyNode):
                     smoothed_params = working_smoothed
                     break
                 blend = min(1.0, max_zoom / (max_required_zoom + 1e-6))
-                print(
-                    "[VideoStabilizer] smoothing/zoom adjustment "
-                    f"attempt={attempt + 1} blend={blend:.3f} required_zoom={max_required_zoom:.3f} "
-                    f"allowed={max_zoom:.3f}"
-                )
                 working_smoothed = _blend_params(raw_params, working_smoothed, blend)
                 attempt += 1
 
             if max_required_zoom > max_zoom + 1e-3:
-                print(
-                    "[VideoStabilizer] unable to stay within zoom budget; falling back to raw trajectory"
-                )
                 (
                     stabilization_transforms,
                     smoothed_mats,
@@ -607,25 +580,11 @@ class VideoStabilizerNode(io.ComfyNode):
 
         _log_trajectory("smoothed", smoothed_mats)
         _log_trajectory("stabilization", stabilization_transforms)
-        print(
-            "[VideoStabilizer] summary "
-            f"frames={frame_count} method={method} "
-            f"smoothness_target={smoothness_target:.3f} "
-            f"max_zoom_needed={max_required_zoom:.3f} user_allowance={max_zoom:.3f} "
-            f"framing={framing_mode}"
-        )
-
         if framing_mode == "CROP":
             effective_zoom = min(max(zoom_needed), max_zoom)
             zooms = [effective_zoom] * frame_count
         else:
             zooms = [min(value, max_zoom) for value in zoom_needed]
-
-        if zooms:
-            print(
-                "[VideoStabilizer] zoom stats "
-                f"min={min(zooms):.3f} max={max(zooms):.3f} mean={np.mean(zooms):.3f}"
-            )
 
         pad_color = _parse_pad_color(pad_color_rgb)
         pad_color_normalized = tuple(channel / 255.0 for channel in pad_color)

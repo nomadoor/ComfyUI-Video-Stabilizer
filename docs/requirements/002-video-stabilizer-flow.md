@@ -2,7 +2,7 @@
 - Deliver a higher fidelity **video stabilization** node that leverages dense optical flow and global motion consensus to minimise residual shake while preserving scene structure.
 - Key features:
   - Dense optical flow derived from OpenCV DIS with adaptive downsampling for speed and robustness.
-  - Dual-stage motion model: per-frame dense flow → global similarity/perspective fit with outlier rejection and bundle smoothing.
+  - Dual-stage motion model: per-frame dense flow ↁEglobal similarity/perspective fit with outlier rejection and bundle smoothing.
   - Adaptive padding: smart crop budget with deterministic masks for downstream inpainting workflows.
 
 ##01 ##id - Identification
@@ -24,11 +24,11 @@
 ##03 ##usecases - Use Cases
 - Dramatically reduce residual shake on footage with significant depth variation.
 - Feed stabilized frames to video diffusion/outpainting pipelines with deterministic missing-region masks.
-- Offer a “quality-first” alternative for users willing to trade compute time for stability.
+- Offer a “quality-first Ealternative for users willing to trade compute time for stability.
 
 ##04 ##params - Input Parameters (current implementation)
 - **method** (default: `similarity`)
-  - `translation` | `similarity` | `perspective` — global motion model fit post-flow.
+  - `translation` | `similarity` | `perspective`  Eglobal motion model fit post-flow.
 - **smoothness** (default: `0.5`, range `0.0`–`1.0`)
   - Controls trajectory regularisation (higher = smoother motion, more border loss).
 - **stabilize_zoom** (default: `0.5`, range `0.0`–`1.0`)
@@ -50,7 +50,7 @@
 3. Sample flows onto a sparse lattice and fit the selected motion model per frame.
 4. Apply One-Euro smoothing to trajectory parameters.
 5. Enforce zoom allowance via iterative blending when `framing=CROP`.
-6. Warp frames with the stabilisation transform and optional zoom; build masks by warping a ones tensor.
+6. Warp frames with the stabilization transform and optional zoom; build masks by warping a ones tensor.
 7. Pad or crop outputs based on `framing`; emit deterministic masks.
 8. Update progress via `get_progress_state().update_progress(...)`.
 
@@ -69,14 +69,14 @@
 - pad_color_rgb: `128,128,128`
 
 ##09 ##accept - Acceptance Criteria
-- DIS flow computation succeeds for typical 720p–4K footage with deterministic results.
+- DIS flow computation succeeds for typical 720p EK footage with deterministic results.
 - Output video exhibits lower jitter than Classic on parallax-heavy clips given the same settings.
 - Binary mask accurately marks missing regions (no false positives).
 - Progress bar updates consistently across long sequences.
 
 ##10 ##tests - Test Plan
 - Unit: verify parameter validation, mask dimensions, deterministic behaviour.
-- Regression: compare stabilisation metrics (camera path variance) vs Classic on sample videos.
+- Regression: compare stabilization metrics (camera path variance) vs Classic on sample videos.
 - Performance: ensure default DIS path completes 1080p@120 frames within acceptable time on reference hardware.
 - CROP framing: confirm no padding bleed and consistent crop window.
 

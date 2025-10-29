@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import math
 from dataclasses import dataclass
 from typing import Iterable, List, Sequence, Tuple
@@ -14,7 +13,6 @@ from comfy_api.latest import io
 from comfy_execution.progress import get_progress_state
 from comfy_execution.utils import get_executing_context
 
-DEFAULT_FLOW_STEP = 16
 MASK_THRESHOLD = 0.995
 
 
@@ -292,13 +290,6 @@ def _build_stabilization_transforms(
     return stabilization_transforms, smoothed_mats, base_masks, zoom_needed
 
 
-def _feather_mask(mask: np.ndarray, radius: int) -> np.ndarray:
-    if radius <= 0:
-        return mask.astype(np.float32)
-    ksize = max(1, int(radius) * 2 + 1)
-    return cv2.GaussianBlur(mask.astype(np.float32), (ksize, ksize), 0)
-
-
 def _create_flow_backend(name: str, pyramid_levels: int):
     name = name.lower()
     if name == "dis":
@@ -331,57 +322,53 @@ class VideoStabilizerFlowNode(io.ComfyNode):
                     tooltip="Input frames (B, H, W, C).",
                 ),
                 io.Combo.Input(
+                    "method",
+                    options=["translation", "similarity", "perspective"],
+                    default="similarity",
+                    display_name="Motion Model",
+                    tooltip="Select the geometric transform estimated between frames.",
+                ),
+                io.Float.Input(
+                    "smoothness",
+                    default=0.5,
+                    min=0.0,
+                    max=1.0,
+                    step=0.01,
+                    display_name="Smoothing",
+                    tooltip="Higher values yield smoother motion at the expense of larger missing borders.",
+                    display_mode=io.NumberDisplay.slider,
+                ),
+                io.Float.Input(
+                    "stabilize_zoom",
+                    default=0.5,
+                    min=0.0,
+                    max=1.0,
+                    step=0.01,
+                    display_name="Zoom Allowance",
+                    tooltip="Maximum automatic zoom (crop) applied to hide borders.",
+                    display_mode=io.NumberDisplay.slider,
+                ),
+                io.Combo.Input(
+                    "framing",
+                    options=["CROP", "CROP_and_PAD"],
+                    default="CROP_and_PAD",
+                    display_name="Framing",
+                    tooltip="Choose how to treat missing borders after stabilization.",
+                ),
+                io.Combo.Input(
                     "flow_backend",
                     options=["DIS", "DeepFlow"],
                     default="DIS",
                     display_name="Flow Backend",
+                    tooltip="Dense optical-flow solver: DIS is faster, DeepFlow is higher quality.",
                 ),
                 io.Int.Input(
                     "pyramid_levels",
                     default=5,
                     min=1,
                     max=10,
-                    display_name="Pyramid Levels",
-                ),
-                io.Float.Input(
-                    "smoothing_strength",
-                    default=0.65,
-                    min=0.0,
-                    max=1.0,
-                    step=0.01,
-                    display_name="Trajectory Smoothing",
-                ),
-                io.Float.Input(
-                    "crop_budget",
-                    default=0.6,
-                    min=0.0,
-                    max=1.0,
-                    step=0.01,
-                    display_name="Crop Budget",
-                ),
-                io.Int.Input(
-                    "mask_feather_px",
-                    default=12,
-                    min=0,
-                    max=64,
-                    display_name="Mask Feather (px)",
-                ),
-                io.Combo.Input(
-                    "reference_model",
-                    options=["translation", "similarity", "perspective"],
-                    default="similarity",
-                    display_name="Motion Model",
-                ),
-                io.Combo.Input(
-                    "use_gpu",
-                    options=["auto", "force_cpu", "force_gpu"],
-                    default="auto",
-                    display_name="GPU Acceleration",
-                ),
-                io.Boolean.Input(
-                    "emit_debug",
-                    default=False,
-                    display_name="Emit Debug Info",
+                    display_name="Flow Pyramid Levels",
+                    tooltip="Number of multi-scale levels used by the dense optical-flow solver.",
                 ),
                 io.String.Input(
                     "pad_color_rgb",
@@ -391,8 +378,7 @@ class VideoStabilizerFlowNode(io.ComfyNode):
             ],
             outputs=[
                 io.Image.Output(display_name="stabilized_frames"),
-                io.Mask.Output(display_name="mask"),
-                io.String.Output(display_name="motion_debug"),
+                io.Mask.Output(display_name="missing_mask"),
             ],
         )
 
@@ -402,12 +388,10 @@ class VideoStabilizerFlowNode(io.ComfyNode):
         frames: torch.Tensor,
         flow_backend: str,
         pyramid_levels: int,
-        smoothing_strength: float,
-        crop_budget: float,
-        mask_feather_px: int,
-        reference_model: str,
-        use_gpu: str,
-        emit_debug: bool,
+        smoothness: float,
+        stabilize_zoom: float,
+        method: str,
+        framing: str,
         pad_color_rgb: str,
     ) -> io.NodeOutput:
         if frames.ndim != 4:
@@ -420,7 +404,7 @@ class VideoStabilizerFlowNode(io.ComfyNode):
                 dtype=frames.dtype,
                 device=frames.device,
             )
-            return io.NodeOutput(frames, mask, None)
+            return io.NodeOutput(frames, mask)
 
         numpy_frames = _tensor_to_numpy(frames)
         frames_linear = np.clip(numpy_frames, 0.0, 1.0)
@@ -445,60 +429,61 @@ class VideoStabilizerFlowNode(io.ComfyNode):
             flows.append(flow.astype(np.float32, copy=False))
 
         height, width = frames_linear.shape[1], frames_linear.shape[2]
-        step = max(4, max(1, min(height, width) // 60))
+        step_divisor = max(6, int(pyramid_levels) * 6)
+        step = max(4, max(1, min(height, width) // step_divisor))
 
         raw_transforms: List[np.ndarray] = [np.eye(3, dtype=np.float64)]
-        translations = []
-        max_flow_mags = []
 
         for flow in flows:
             prev_points, curr_points = _flow_to_points(flow, step)
             if prev_points.shape[0] < 4:
                 transform = np.eye(3, dtype=np.float64)
             else:
-                transform = _fit_transform(prev_points, curr_points, reference_model)
+                transform = _fit_transform(prev_points, curr_points, method)
             combined = raw_transforms[-1] @ transform
             if not np.isfinite(combined).all() or abs(np.linalg.det(combined)) < 1e-6:
                 combined = raw_transforms[-1]
-            raw_transforms.append(combined)
-            translations.append(float(np.linalg.norm(transform[:2, 2])))
-            max_flow_mags.append(float(np.linalg.norm(flow, axis=2).max()))
+            raw_transforms.append(_enforce_motion_model(combined, method))
 
-        smooth_params = _smooth_params_sequence(
-            [_params_from_matrix(mat, reference_model) for mat in raw_transforms],
-            smoothing_strength,
-            reference_model,
-        )
+        raw_params = [_params_from_matrix(mat, method) for mat in raw_transforms]
+        smooth_params = _smooth_params_sequence(raw_params, smoothness, method)
         (
             stabilization_transforms,
-            smoothed_mats,
-            base_masks,
+            _smoothed_mats,
+            _base_masks,
             zoom_needed,
         ) = _build_stabilization_transforms(
             raw_transforms,
-            [_params_from_matrix(mat, reference_model) for mat in raw_transforms],
+            raw_params,
             smooth_params,
-            reference_model,
+            method,
             width,
             height,
         )
 
+        max_zoom = 1.0 + float(np.clip(stabilize_zoom, 0.0, 1.0))
+        framing_mode = str(framing).upper()
         max_zoom_needed = max(zoom_needed) if zoom_needed else 1.0
-        max_zoom = 1.0 + float(np.clip(crop_budget, 0.0, 1.0))
-
-        framing_mode = "CROP" if crop_budget <= 1e-4 else "CROP_AND_PAD"
         pad_color = _parse_pad_color(pad_color_rgb)
         pad_color_normalized = tuple(channel / 255.0 for channel in pad_color)
+
+        if framing_mode == "CROP":
+            crop_zoom = min(max(zoom_needed) if zoom_needed else 1.0, max_zoom)
+            zooms = [crop_zoom] * frame_count
+        elif framing_mode == "CROP_AND_PAD":
+            zooms = [min(value, max_zoom) for value in zoom_needed]
+        else:
+            zooms = [1.0] * frame_count
+            framing_mode = "CROP_AND_PAD"
 
         progress_context = get_executing_context()
         progress_node_id = getattr(progress_context, "node_id", None)
 
         stabilized_frames: List[np.ndarray] = []
         stabilized_masks: List[np.ndarray] = []
-        for idx, (frame, transform) in enumerate(
-            zip(frames_linear, stabilization_transforms)
+        for idx, (frame, transform, zoom) in enumerate(
+            zip(frames_linear, stabilization_transforms, zooms)
         ):
-            zoom = min(zoom_needed[idx], max_zoom)
             zoom_matrix = _zoom_matrix(zoom, width, height)
             full_transform = zoom_matrix @ transform
             stabilized = cv2.warpPerspective(
@@ -550,30 +535,17 @@ class VideoStabilizerFlowNode(io.ComfyNode):
                     value=frame_count,
                     max_value=frame_count,
                 )
-            debug_payload = None
-            if emit_debug:
-                debug_payload = json.dumps(
-                    {
-                        "flow_backend": flow_backend,
-                        "max_translation": float(max(translations) if translations else 0.0),
-                        "max_flow_magnitude": float(max(max_flow_mags) if max_flow_mags else 0.0),
-                        "max_zoom_needed": float(max_zoom_needed),
-                        "crop_budget": float(crop_budget),
-                        "frames": frame_count,
-                    }
-                )
-            return io.NodeOutput(frames_tensor, mask_tensor, debug_payload)
+            return io.NodeOutput(frames_tensor, mask_tensor)
 
         filled_frames: List[np.ndarray] = []
         output_masks: List[np.ndarray] = []
         for frame, mask in zip(stabilized_frames, stabilized_masks):
             missing = np.clip(1.0 - mask, 0.0, 1.0)
-            feathered = _feather_mask(missing, mask_feather_px)
             if np.any(missing > 0.0):
                 frame = frame.copy()
                 frame[missing > 0.0] = pad_color_normalized
             filled_frames.append(frame)
-            output_masks.append(feathered)
+            output_masks.append(missing)
 
         frames_tensor = _numpy_to_tensor(np.stack(filled_frames, axis=0), frames)
         mask_tensor = _numpy_to_tensor(np.stack(output_masks, axis=0), frames)
@@ -583,19 +555,7 @@ class VideoStabilizerFlowNode(io.ComfyNode):
                 value=frame_count,
                 max_value=frame_count,
             )
-        debug_payload = None
-        if emit_debug:
-            debug_payload = json.dumps(
-                {
-                    "flow_backend": flow_backend,
-                    "max_translation": float(max(translations) if translations else 0.0),
-                    "max_flow_magnitude": float(max(max_flow_mags) if max_flow_mags else 0.0),
-                    "max_zoom_needed": float(max_zoom_needed),
-                    "crop_budget": float(crop_budget),
-                    "frames": frame_count,
-                }
-            )
-        return io.NodeOutput(frames_tensor, mask_tensor, debug_payload)
+        return io.NodeOutput(frames_tensor, mask_tensor)
 
 
 def _zoom_matrix(factor: float, width: int, height: int) -> np.ndarray:

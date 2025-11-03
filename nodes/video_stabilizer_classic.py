@@ -104,25 +104,6 @@ def _to_numpy_frame(frame: Any) -> Tuple[np.ndarray, FrameAdapter]:
     return arr, adapter
 
 
-def _from_numpy_frame(frame: np.ndarray, adapter: FrameAdapter) -> Any:
-    """Project the stabilized numpy frame back to the original container representation."""
-    output = np.clip(frame, 0.0, 1.0)
-    if adapter.value_range == "0_255":
-        output = np.rint(output * 255.0).astype(adapter.dtype)
-    else:
-        output = output.astype(adapter.dtype)
-
-    if adapter.channel_first:
-        output = np.moveaxis(output, -1, 0)
-
-    if adapter.squeeze_last_dim and output.ndim >= 3:
-        output = output[..., 0]
-
-    if adapter.origin == "torch" and torch is not None:
-        return torch.from_numpy(output)
-    return output
-
-
 def _normalize_video_input(value: Any) -> VideoContext:
     """Extract list of numpy frames plus metadata required for reconstruction."""
     if isinstance(value, dict):
@@ -155,6 +136,7 @@ def _normalize_video_input(value: Any) -> VideoContext:
             # Ensure adapter consistency; mismatches can cause runtime surprises.
             if adapter.channel_first != adapter_ref.channel_first or adapter.origin != adapter_ref.origin:
                 raise ValueError("Mixed tensor layouts within the same video sequence are not supported.")
+        arr = _ensure_rgb(arr)
         frames_np.append(arr)
 
     if not frames_np:
@@ -174,13 +156,23 @@ def _normalize_video_input(value: Any) -> VideoContext:
 
 
 def _reconstruct_video(frames: Iterable[np.ndarray], context: VideoContext) -> Any:
-    """Pack numpy frames back into the incoming container style."""
-    converted = [_from_numpy_frame(frame, context.adapter) for frame in frames]
+    """Pack frames into a BHWC torch tensor (or numpy) following Comfy conventions."""
+    frame_list = list(frames)
+    if not frame_list:
+        stacked = np.zeros((1, context.height, context.width, 3), dtype=np.float32)
+    else:
+        stacked = np.stack(frame_list, axis=0).astype(np.float32)
+    stacked = np.ascontiguousarray(stacked)
+    if torch is not None:
+        tensor = torch.from_numpy(stacked)
+    else:
+        tensor = stacked
+
     if context.template_kind == "dict":
         payload = dict(context.template_meta)
-        payload["frames"] = converted
+        payload["frames"] = tensor
         return payload
-    return converted
+    return tensor
 
 
 def _make_gray(frame: np.ndarray) -> np.ndarray:
@@ -442,18 +434,19 @@ def _min_content_ratio(
     return max(1e-6, min(intersection_w / width, intersection_h / height))
 
 
-def _convert_masks_for_output(masks: Iterable[np.ndarray]) -> List[Any]:
+def _convert_masks_for_output(masks: Iterable[np.ndarray]) -> Any:
     """Convert internal mask stack to Comfy-compatible outputs."""
-    masks_2d = []
+    masks_2d: List[np.ndarray] = []
     for mask in masks:
         mask_2d = mask[..., 0] if mask.ndim == 3 else mask
         masks_2d.append(mask_2d.astype(np.float32))
 
     if not masks_2d:
-        return torch.zeros((0, 1, 1), dtype=torch.float32) if torch is not None else np.zeros((0, 1, 1), dtype=np.float32)
+        stacked = np.zeros((1, 1, 1), dtype=np.float32)
+    else:
+        stacked = np.stack(masks_2d, axis=0)  # (frames, H, W)
 
-    stacked = np.stack(masks_2d, axis=0)  # (frames, H, W)
-
+    stacked = np.ascontiguousarray(stacked)
     if torch is not None:
         return torch.from_numpy(stacked)
     return stacked
@@ -476,6 +469,18 @@ def _parse_padding_color(value: str) -> Tuple[int, int, int]:
     return tuple(int(np.clip(channel, 0, 255)) for channel in rgb)
 
 
+def _ensure_rgb(frame: np.ndarray) -> np.ndarray:
+    """Ensure frame is RGB (no alpha) and channel-last."""
+    if frame.ndim == 2:
+        frame = frame[..., np.newaxis]
+    channels = frame.shape[2]
+    if channels == 1:
+        frame = np.repeat(frame, 3, axis=2)
+    elif channels > 3:
+        frame = frame[..., :3]
+    return frame
+
+
 def _stabilize_frames(
     context: VideoContext,
     framing_mode: FramingMode,
@@ -494,6 +499,7 @@ def _stabilize_frames(
     pbar = ProgressBar(total_frames) if total_frames > 0 else None
     if len(frames) == 1:
         zero_mask = np.zeros((context.height, context.width, 1), dtype=np.float32)
+        frame_rgb = _ensure_rgb(frames[0])
         meta = {
             "frames": 1,
             "note": "Single-frame input; bypassed stabilization.",
@@ -502,7 +508,7 @@ def _stabilize_frames(
         }
         if pbar is not None:
             pbar.update(total_frames)
-        return StabilizationResult(frames.copy(), [zero_mask], meta)
+        return StabilizationResult([frame_rgb], [zero_mask], meta)
 
     gray_frames = [_make_gray(frame) for frame in frames]
     base_mode = transform_mode
@@ -575,7 +581,8 @@ def _stabilize_frames(
         }
         if pbar is not None:
             pbar.update(total_frames)
-        return StabilizationResult(frames.copy(), [zero_mask] * len(frames), meta)
+        frames_rgb = [_ensure_rgb(frame) for frame in frames]
+        return StabilizationResult(frames_rgb, [zero_mask] * len(frames_rgb), meta)
 
     apply_matrices = [_params_to_matrix(diff, base_mode) for diff in effective_diffs]
     mins, maxs = _compute_bounding_boxes(apply_matrices, context.width, context.height)
@@ -692,6 +699,7 @@ def _stabilize_frames(
     stabilized_frames: List[np.ndarray] = []
     padding_masks: List[np.ndarray] = []
     padded_ratios: List[float] = []
+    crop_adjusted_frames = 0
 
     padding_array = np.array(padding_rgb, dtype=np.float32) / 255.0
     if context.channels == 1:
@@ -708,9 +716,69 @@ def _stabilize_frames(
             borderMode=cv2.BORDER_CONSTANT,
             borderValue=frame_border_value,
         )
-        stabilized_frames.append(warped.astype(np.float32))
+        warped_rgb = _ensure_rgb(warped.astype(np.float32))
+        stabilized_frames.append(warped_rgb)
 
         if framing_mode == "crop":
+            content = cv2.warpPerspective(
+                np.ones((context.height, context.width), dtype=np.float32),
+                matrix,
+                output_size,
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_CONSTANT,
+                borderValue=0.0,
+            )
+            content = np.clip(content, 0.0, 1.0)
+            coverage = float(content.mean())
+            if coverage < 0.999:
+                coords = np.argwhere(content > 0.5)
+                if coords.size > 0:
+                    y_min, x_min = coords.min(axis=0)
+                    y_max, x_max = coords.max(axis=0)
+                    content_w = max(1.0, float(x_max - x_min + 1))
+                    content_h = max(1.0, float(y_max - y_min + 1))
+                    scale_x = context.width / content_w
+                    scale_y = context.height / content_h
+                    scale = min(scale_x, scale_y)
+                    scale = min(scale, 1.05)
+                    if scale > 1.0005:
+                        center_x = float(x_min + x_max) * 0.5
+                        center_y = float(y_min + y_max) * 0.5
+                        translate_to_center = np.array(
+                            [
+                                [1.0, 0.0, -center_x],
+                                [0.0, 1.0, -center_y],
+                                [0.0, 0.0, 1.0],
+                            ],
+                            dtype=np.float32,
+                        )
+                        scale_mat = np.array(
+                            [
+                                [scale, 0.0, 0.0],
+                                [0.0, scale, 0.0],
+                                [0.0, 0.0, 1.0],
+                            ],
+                            dtype=np.float32,
+                        )
+                        translate_back = np.array(
+                            [
+                                [1.0, 0.0, context.width * 0.5],
+                                [0.0, 1.0, context.height * 0.5],
+                                [0.0, 0.0, 1.0],
+                            ],
+                            dtype=np.float32,
+                        )
+                        matrix = translate_back @ scale_mat @ translate_to_center @ matrix
+                    warped = cv2.warpPerspective(
+                        frame,
+                        matrix,
+                        output_size,
+                        flags=cv2.INTER_LINEAR,
+                        borderMode=cv2.BORDER_CONSTANT,
+                        borderValue=frame_border_value,
+                    )
+                    stabilized_frames[-1] = _ensure_rgb(warped.astype(np.float32))
+                    crop_adjusted_frames += 1
             mask = np.zeros((output_size[1], output_size[0], 1), dtype=np.float32)
         else:
             content = cv2.warpPerspective(
@@ -756,6 +824,8 @@ def _stabilize_frames(
         "padding_fraction_mean": float(np.mean(padded_ratios)),
         "padding_fraction_max": float(np.max(padded_ratios)),
     }
+    if crop_adjusted_frames > 0:
+        meta["crop_adjusted_frames"] = crop_adjusted_frames
 
     return StabilizationResult(stabilized_frames, padding_masks, meta)
 

@@ -23,6 +23,7 @@ except ImportError:  # pragma: no cover - torch is expected at runtime but optio
     torch = None
 
 from comfy_api.latest import ComfyExtension, io
+from comfy.utils import ProgressBar
 
 FramingMode = Literal["crop", "crop_and_pad", "expand"]
 TransformMode = Literal["translation", "similarity", "perspective"]
@@ -489,6 +490,8 @@ def _stabilize_frames(
         raise RuntimeError("OpenCV is required for the video stabilizer node.")
 
     frames = context.frames
+    total_frames = len(frames)
+    pbar = ProgressBar(total_frames) if total_frames > 0 else None
     if len(frames) == 1:
         zero_mask = np.zeros((context.height, context.width, 1), dtype=np.float32)
         meta = {
@@ -497,6 +500,8 @@ def _stabilize_frames(
             "transform_mode": transform_mode,
             "framing_mode": framing_mode,
         }
+        if pbar is not None:
+            pbar.update(total_frames)
         return StabilizationResult(frames.copy(), [zero_mask], meta)
 
     gray_frames = [_make_gray(frame) for frame in frames]
@@ -568,6 +573,8 @@ def _stabilize_frames(
             "padding_fraction_mean": 0.0,
             "padding_fraction_max": 0.0,
         }
+        if pbar is not None:
+            pbar.update(total_frames)
         return StabilizationResult(frames.copy(), [zero_mask] * len(frames), meta)
 
     apply_matrices = [_params_to_matrix(diff, base_mode) for diff in effective_diffs]
@@ -718,6 +725,8 @@ def _stabilize_frames(
             mask = (1.0 - content)[..., np.newaxis].astype(np.float32)
         padded_ratios.append(float(mask.mean()))
         padding_masks.append(mask)
+        if pbar is not None:
+            pbar.update(1)
 
     meta = {
         "frames": len(frames),

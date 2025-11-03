@@ -1,0 +1,32 @@
+# Byte-compiled / optimized files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*$py.class
+
+# Virtual environments
+.venv/
+.env/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+
+# Editor project files
+.vscode/
+.idea/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Local agent state
+.serena/
+
+# Logs
+*.log
+
+# test
+.test/

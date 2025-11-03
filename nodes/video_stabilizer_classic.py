@@ -266,11 +266,16 @@ def _estimate_motion_pair(
                 affine3x3 = np.vstack([matrix, np.array([0.0, 0.0, 1.0], dtype=np.float32)])
                 return affine3x3.astype(np.float32), "similarity", confidence
         elif mode == "translation":
-            delta = np.median(good_curr - good_prev, axis=0)
+            shifts = good_curr - good_prev
+            if shifts.ndim > 2:
+                shifts = shifts.reshape(-1, shifts.shape[-1])
+            delta = np.median(shifts, axis=0).reshape(-1).astype(np.float32)
+            tx = float(delta[0]) if delta.size > 0 else 0.0
+            ty = float(delta[1]) if delta.size > 1 else 0.0
             matrix = np.array(
                 [
-                    [1.0, 0.0, float(delta[0])],
-                    [0.0, 1.0, float(delta[1])],
+                    [1.0, 0.0, tx],
+                    [0.0, 1.0, ty],
                     [0.0, 0.0, 1.0],
                 ],
                 dtype=np.float32,
@@ -396,54 +401,6 @@ def _compute_bounding_boxes(
     return np.array(mins), np.array(maxs)
 
 
-def _prepare_crop_transform(
-    mins: np.ndarray,
-    maxs: np.ndarray,
-    width: int,
-    height: int,
-    keep_fov: float,
-) -> Tuple[np.ndarray, dict]:
-    """Determine crop transform, effective ratio, and metadata."""
-    x0 = np.max(mins[:, 0])
-    y0 = np.max(mins[:, 1])
-    x1 = np.min(maxs[:, 0])
-    y1 = np.min(maxs[:, 1])
-
-    intersection_w = max(1.0, x1 - x0)
-    intersection_h = max(1.0, y1 - y0)
-    min_ratio = max(1e-3, min(intersection_w / width, intersection_h / height))
-
-    limit = float(np.clip(keep_fov, 0.0, 1.0))
-    target_ratio = float(np.clip(max(min_ratio, limit), 1e-3, 1.0))
-
-    crop_w = width * target_ratio
-    crop_h = height * target_ratio
-
-    center_x = np.clip((x0 + x1) * 0.5, crop_w * 0.5, width - crop_w * 0.5)
-    center_y = np.clip((y0 + y1) * 0.5, crop_h * 0.5, height - crop_h * 0.5)
-
-    crop_x0 = center_x - crop_w * 0.5
-    crop_y0 = center_y - crop_h * 0.5
-
-    scale_x = width / crop_w
-    scale_y = height / crop_h
-    crop_matrix = np.array(
-        [
-            [scale_x, 0.0, -scale_x * crop_x0],
-            [0.0, scale_y, -scale_y * crop_y0],
-            [0.0, 0.0, 1.0],
-        ],
-        dtype=np.float32,
-    )
-    framing_meta = {
-        "min_content_ratio": min_ratio,
-        "keep_fov_effective": target_ratio,
-        "crop_origin": [crop_x0, crop_y0],
-        "crop_size": [crop_w, crop_h],
-    }
-    return crop_matrix, framing_meta
-
-
 def _prepare_expand_transform(
     mins: np.ndarray,
     maxs: np.ndarray,
@@ -467,6 +424,57 @@ def _prepare_expand_transform(
     return translate, (max(out_w, 1), max(out_h, 1))
 
 
+def _min_content_ratio(
+    mins: np.ndarray,
+    maxs: np.ndarray,
+    width: int,
+    height: int,
+) -> float:
+    """Smallest width/height ratio that keeps warped content inside the frame."""
+    x0 = np.max(mins[:, 0])
+    y0 = np.max(mins[:, 1])
+    x1 = np.min(maxs[:, 0])
+    y1 = np.min(maxs[:, 1])
+
+    intersection_w = max(1.0, x1 - x0)
+    intersection_h = max(1.0, y1 - y0)
+    return max(1e-6, min(intersection_w / width, intersection_h / height))
+
+
+def _convert_masks_for_output(masks: Iterable[np.ndarray]) -> List[Any]:
+    """Convert internal mask stack to Comfy-compatible outputs."""
+    masks_2d = []
+    for mask in masks:
+        mask_2d = mask[..., 0] if mask.ndim == 3 else mask
+        masks_2d.append(mask_2d.astype(np.float32))
+
+    if not masks_2d:
+        return torch.zeros((0, 1, 1), dtype=torch.float32) if torch is not None else np.zeros((0, 1, 1), dtype=np.float32)
+
+    stacked = np.stack(masks_2d, axis=0)  # (frames, H, W)
+
+    if torch is not None:
+        return torch.from_numpy(stacked)
+    return stacked
+
+
+def _parse_padding_color(value: str) -> Tuple[int, int, int]:
+    """Parse comma-separated RGB string into three clamped ints."""
+    default = (128, 128, 128)
+    if not isinstance(value, str):
+        return default
+    parts = [part.strip() for part in value.split(",")]
+    if len(parts) != 3:
+        return default
+    rgb: List[int] = []
+    for part in parts:
+        try:
+            rgb.append(int(part))
+        except ValueError:
+            return default
+    return tuple(int(np.clip(channel, 0, 255)) for channel in rgb)
+
+
 def _stabilize_frames(
     context: VideoContext,
     framing_mode: FramingMode,
@@ -475,6 +483,7 @@ def _stabilize_frames(
     strength: float,
     smooth: float,
     keep_fov: float,
+    padding_rgb: Tuple[int, int, int],
 ) -> StabilizationResult:
     if cv2 is None:
         raise RuntimeError("OpenCV is required for the video stabilizer node.")
@@ -527,29 +536,161 @@ def _stabilize_frames(
         target_path = path + strength * (smooth_path - path)
 
     diffs = target_path - path
-    apply_matrices = [_params_to_matrix(diff, base_mode) for diff in diffs]
+    effective_diffs = diffs.copy()
+    strength_effective_factor = 1.0
+    keep_fov_clamped = float(np.clip(keep_fov, 0.0, 1.0))
+    keep_fov_applied = False
 
+    if framing_mode == "crop" and keep_fov_clamped >= 0.9999:
+        zero_mask = np.zeros((context.height, context.width, 1), dtype=np.float32)
+        meta = {
+            "frames": len(frames),
+            "note": "keep_fov≈1.0 in crop mode; returning original frames.",
+            "transform_mode_requested": transform_mode,
+            "transform_mode_applied": "identity",
+            "camera_lock": camera_lock,
+            "strength": strength,
+            "strength_effective": 0.0,
+            "smooth": smooth,
+            "framing": {
+                "mode": framing_mode,
+                "input_size": [context.width, context.height],
+                "keep_fov_requested": keep_fov_clamped,
+                "keep_fov_effective": 1.0,
+                "min_content_ratio": 1.0,
+            },
+            "keep_fov_applied": False,
+            "estimated_motion": {
+                "path": path.tolist(),
+                "target_path": target_path.tolist(),
+                "target_path_effective": path.tolist(),
+            },
+            "padding_fraction_mean": 0.0,
+            "padding_fraction_max": 0.0,
+        }
+        return StabilizationResult(frames.copy(), [zero_mask] * len(frames), meta)
+
+    apply_matrices = [_params_to_matrix(diff, base_mode) for diff in effective_diffs]
     mins, maxs = _compute_bounding_boxes(apply_matrices, context.width, context.height)
+
+    if framing_mode == "crop":
+        keep_fov_applied = True
+        allowed_ratio = max(keep_fov_clamped, 1e-3)
+        max_iterations = 10
+        for _ in range(max_iterations):
+            needed_ratio = _min_content_ratio(mins, maxs, context.width, context.height)
+            if needed_ratio >= allowed_ratio - 1e-6:
+                break
+            if allowed_ratio <= 1e-6:
+                break
+            scale = float(np.clip(needed_ratio / allowed_ratio, 0.0, 1.0))
+            if scale <= 1e-6:
+                break
+            effective_diffs *= scale
+            strength_effective_factor *= scale
+            apply_matrices = [_params_to_matrix(diff, base_mode) for diff in effective_diffs]
+            mins, maxs = _compute_bounding_boxes(apply_matrices, context.width, context.height)
+    else:
+        keep_fov_applied = False
+
+    effective_target_path = path + effective_diffs
     final_matrices: List[np.ndarray] = []
     framing_meta: Dict[str, Any] = {
         "mode": framing_mode,
         "input_size": [context.width, context.height],
-        "keep_fov_requested": float(np.clip(keep_fov, 0.0, 1.0)),
     }
+    if keep_fov_applied:
+        framing_meta["keep_fov_requested"] = keep_fov_clamped
+    framing_meta["padding_color_rgb"] = list(padding_rgb)
 
-    if framing_mode in ("crop", "crop_and_pad"):
-        crop_matrix, crop_meta = _prepare_crop_transform(mins, maxs, context.width, context.height, keep_fov)
+    if framing_mode == "crop":
+        x0 = float(np.max(mins[:, 0]))
+        y0 = float(np.max(mins[:, 1]))
+        x1 = float(np.min(maxs[:, 0]))
+        y1 = float(np.min(maxs[:, 1]))
+
+        intersection_w = max(1.0, x1 - x0)
+        intersection_h = max(1.0, y1 - y0)
+        crop_w = intersection_w
+        crop_h = intersection_h
+        center_x = (x0 + x1) * 0.5
+        center_y = (y0 + y1) * 0.5
+        crop_x0 = center_x - crop_w * 0.5
+        crop_y0 = center_y - crop_h * 0.5
+
+        scale_x = context.width / crop_w
+        scale_y = context.height / crop_h
+        crop_matrix = np.array(
+            [
+                [scale_x, 0.0, -scale_x * crop_x0],
+                [0.0, scale_y, -scale_y * crop_y0],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+
         final_matrices = [crop_matrix @ mat for mat in apply_matrices]
-        framing_meta.update(crop_meta)
+        actual_ratio = min(crop_w / context.width, crop_h / context.height)
+        framing_meta.update(
+            {
+                "min_content_ratio": _min_content_ratio(mins, maxs, context.width, context.height),
+                "crop_origin": [crop_x0, crop_y0],
+                "crop_size": [crop_w, crop_h],
+                "actual_content_ratio": actual_ratio,
+                "keep_fov_effective": actual_ratio,
+            }
+        )
+        output_size = (context.width, context.height)
+    elif framing_mode == "crop_and_pad":
+        x0 = float(np.max(mins[:, 0]))
+        y0 = float(np.max(mins[:, 1]))
+        x1 = float(np.min(maxs[:, 0]))
+        y1 = float(np.min(maxs[:, 1]))
+
+        intersection_w = max(1.0, x1 - x0)
+        intersection_h = max(1.0, y1 - y0)
+        center_x = (x0 + x1) * 0.5
+        center_y = (y0 + y1) * 0.5
+        frame_center_x = context.width * 0.5
+        frame_center_y = context.height * 0.5
+
+        offset_x = frame_center_x - center_x
+        offset_y = frame_center_y - center_y
+        translate_matrix = np.array(
+            [
+                [1.0, 0.0, offset_x],
+                [0.0, 1.0, offset_y],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+        final_matrices = [translate_matrix @ mat for mat in apply_matrices]
+        actual_ratio = min(intersection_w / context.width, intersection_h / context.height)
+        framing_meta.update(
+            {
+                "safe_region_origin": [x0, y0],
+                "safe_region_size": [intersection_w, intersection_h],
+                "actual_content_ratio": actual_ratio,
+                "center_offset": [offset_x, offset_y],
+                "min_content_ratio": _min_content_ratio(mins, maxs, context.width, context.height),
+            }
+        )
         output_size = (context.width, context.height)
     else:
         translate_matrix, output_size = _prepare_expand_transform(mins, maxs)
         final_matrices = [translate_matrix @ mat for mat in apply_matrices]
         framing_meta["expanded_size"] = list(output_size)
+        framing_meta["min_content_ratio"] = _min_content_ratio(mins, maxs, context.width, context.height)
 
     stabilized_frames: List[np.ndarray] = []
     padding_masks: List[np.ndarray] = []
     padded_ratios: List[float] = []
+
+    padding_array = np.array(padding_rgb, dtype=np.float32) / 255.0
+    if context.channels == 1:
+        frame_border_value: Any = float(np.mean(padding_array))
+    else:
+        frame_border_value = padding_array.tolist()
 
     for idx, (frame, matrix) in enumerate(zip(frames, final_matrices)):
         warped = cv2.warpPerspective(
@@ -558,7 +699,7 @@ def _stabilize_frames(
             output_size,
             flags=cv2.INTER_LINEAR,
             borderMode=cv2.BORDER_CONSTANT,
-            borderValue=0.0,
+            borderValue=frame_border_value,
         )
         stabilized_frames.append(warped.astype(np.float32))
 
@@ -584,8 +725,11 @@ def _stabilize_frames(
         "transform_mode_applied": active_mode,
         "camera_lock": camera_lock,
         "strength": strength,
+        "strength_effective": strength * strength_effective_factor,
         "smooth": smooth,
         "framing": framing_meta,
+        "keep_fov_applied": keep_fov_applied,
+        "padding_color_rgb": list(padding_rgb),
         "estimated_motion": {
             "per_transition": [
                 {
@@ -598,6 +742,7 @@ def _stabilize_frames(
             ],
             "path": path.tolist(),
             "target_path": target_path.tolist(),
+            "target_path_effective": effective_target_path.tolist(),
         },
         "padding_fraction_mean": float(np.mean(padded_ratios)),
         "padding_fraction_max": float(np.max(padded_ratios)),
@@ -612,7 +757,7 @@ class VideoStabilizerClassic(io.ComfyNode):
     @classmethod
     def define_schema(cls) -> io.Schema:
         schema = io.Schema(
-            node_id="codex.video_stabilizer.classic.v1",
+            node_id="video_stabilizer_classic",
             display_name="Video Stabilizer (Classic)",
             category="Video/Stabilization",
             description=(
@@ -631,7 +776,7 @@ class VideoStabilizerClassic(io.ComfyNode):
             ),
             io.Combo.Input(
                 "transform_mode",
-                options=["similarity", "perspective", "translation"],
+                options=["translation", "similarity", "perspective"],
                 default="similarity",
                 display_name="Transform Mode",
                 tooltip="Select the geometric model used to estimate camera motion.",
@@ -669,8 +814,17 @@ class VideoStabilizerClassic(io.ComfyNode):
                 max=1.0,
                 step=0.05,
                 display_name="Keep FOV",
-                tooltip="入力FOVの死守度（1.0 = ズーム0, 0.0 = 最大ズーム）",
+                tooltip=(
+                    "【cropモード専用】入力FOVの保持度（1.0 = ズーム0, 0.0 = 最大ズーム許容）。"
+                    "crop_and_pad / expand では無視されます。"
+                ),
                 display_mode=io.NumberDisplay.slider,
+            ),
+            io.String.Input(
+                "padding_color",
+                default="128, 128, 128",
+                display_name="Padding RGB",
+                tooltip="Comma separated padding color applied in crop_and_pad / expand (e.g. 64, 64, 64).",
             ),
         ]
         schema.outputs = [
@@ -690,8 +844,10 @@ class VideoStabilizerClassic(io.ComfyNode):
         strength: float,
         smooth: float,
         keep_fov: float,
+        padding_color: str,
     ) -> io.NodeOutput:
         context = _normalize_video_input(frames)
+        padding_rgb = _parse_padding_color(padding_color)
         result = _stabilize_frames(
             context=context,
             framing_mode=framing_mode,
@@ -700,26 +856,11 @@ class VideoStabilizerClassic(io.ComfyNode):
             strength=strength,
             smooth=smooth,
             keep_fov=keep_fov,
+            padding_rgb=padding_rgb,
         )
 
         video_payload = _reconstruct_video(result.frames, context)
-        mask_context = VideoContext(
-            frames=result.masks,
-            adapter=FrameAdapter(
-                dtype=np.float32,
-                channel_first=False,
-                value_range="0_1",
-                origin=context.adapter.origin,
-                squeeze_last_dim=True,
-            ),
-            width=context.width,
-            height=context.height,
-            channels=1,
-            fps=context.fps,
-            template_kind=context.template_kind,
-            template_meta=dict(context.template_meta),
-        )
-        mask_payload = _reconstruct_video(result.masks, mask_context)
+        mask_payload = _convert_masks_for_output(result.masks)
 
         return io.NodeOutput(video_payload, mask_payload, result.meta)
 

@@ -34,10 +34,12 @@ Last updated: 2025‑11‑03 (UTC+9)
 * **smooth**: `float 0..1` (active when `camera_lock=false`)
 
   * Temporal **trajectory smoothing** strength (higher = fewer jitters but more damping of intentional motion)
-* **keep_fov**: `float 0..1` (used when `framing_mode=crop|crop_and_pad`)
+* **keep_fov**: `float 0..1` (effective only when `framing_mode=crop`; ignored otherwise)
 
   * `1.0 = ズーム0 (入力FOVを完全死守)`, `0.0 = 最大ズーム許容` (internally clamped to safe limits)
-  * In `crop_and_pad`: respect `keep_fov` first, then pad anything that still exceeds the frame
+* **padding_color**: `string "R, G, B"` (optional border color for `crop_and_pad` / `expand`)
+
+  * Comma-separated 0–255 integers, e.g., `128, 128, 128`（デフォルトの中間灰色）
 
 > Design note: **Do not fold `camera_lock` into `framing_mode`**. Lock and framing are orthogonal.
 
@@ -53,7 +55,8 @@ Last updated: 2025‑11‑03 (UTC+9)
 * `camera_lock`: BOOL (enables lock solver; hides/disables strength & smooth)
 * `strength`: FLOAT 0..1 (effective only when `camera_lock=false`)
 * `smooth`: FLOAT 0..1 (effective only when `camera_lock=false`)
-* `keep_fov`: FLOAT 0..1 (treated as `1.0` a.k.a. **no zoom** when `framing_mode=expand`)
+* `keep_fov`: FLOAT 0..1 (used only when `framing_mode=crop`; ignored otherwise)
+* `padding_color`: STRING `"R, G, B"` (border color for `crop_and_pad` / `expand`; ignored in `crop`)
 
 ### Outputs
 
@@ -81,7 +84,7 @@ Last updated: 2025‑11‑03 (UTC+9)
 4. **Framing**
 
    * `crop`: hide edges via zoom governed by `keep_fov`
-   * `crop_and_pad`: zoom within `keep_fov`, then pad the remainder (mark pad=1 in mask; exclude pad from tracking)
+   * `crop_and_pad`: keep FOV (only recenter) and pad the remainder (mark pad=1 in mask; exclude pad from tracking)
    * `expand`: zero zoom; enlarge canvas to the minimal enclosing rectangle (or keep input size + extend outward—implementation choice)
 5. **Numerical robustness**
 
@@ -101,6 +104,7 @@ Last updated: 2025‑11‑03 (UTC+9)
 * `strength = 0.7`
 * `smooth = 0.5`
 * `keep_fov = 0.6`
+* `padding_color = "128, 128, 128"`
 
 ---
 

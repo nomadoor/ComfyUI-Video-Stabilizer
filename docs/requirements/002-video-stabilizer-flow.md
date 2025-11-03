@@ -15,7 +15,7 @@ Last updated: 2025‑11‑03 (UTC+9)
 
 ## B. User‑Facing Controls — No Change
 
-* Reuse the exact same controls and behavior from the Classic file: `framing_mode`, `transform_mode`, `camera_lock`, `strength`, `smooth`, `keep_fov`
+* Reuse the exact same controls and behavior from the Classic file: `framing_mode`, `transform_mode`, `camera_lock`, `strength`, `smooth`, `keep_fov`（Cropモード専用）, `padding_color`（`crop_and_pad` / `expand` の境界色）
 * Flow vs. Classic is surfaced as **different nodes** or an internal backend toggle — the UI schema remains the same
 
 ---

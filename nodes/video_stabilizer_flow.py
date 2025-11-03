@@ -555,7 +555,7 @@ def _stabilize_frames(
             zero_mask = np.zeros((context.height, context.width, 1), dtype=np.float32)
             meta = {
                 "frames": len(frames),
-                "note": "keep_fov≈1.0 in crop mode; returning original frames.",
+                "note": "keep_fov~=1.0 in crop mode; returning original frames.",
                 "transform_mode_requested": transform_mode,
                 "transform_mode_applied": "identity",
                 "camera_lock": camera_lock,
@@ -580,10 +580,10 @@ def _stabilize_frames(
                 "padding_fraction_mean": 0.0,
                 "padding_fraction_max": 0.0,
             }
-        if pbar is not None:
-            pbar.update(total_frames)
-        frames_rgb = [_ensure_rgb(frame) for frame in frames]
-        return StabilizationResult(frames_rgb, [zero_mask] * len(frames_rgb), meta)
+            if pbar is not None:
+                pbar.update(total_frames)
+            frames_rgb = [_ensure_rgb(frame) for frame in frames]
+            return StabilizationResult(frames_rgb, [zero_mask] * len(frames_rgb), meta)
 
         keep_fov_applied = True
         allowed_ratio = max(keep_fov_clamped, 1e-3)

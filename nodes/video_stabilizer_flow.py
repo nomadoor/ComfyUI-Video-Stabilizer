@@ -441,6 +441,15 @@ def _min_content_ratio(
     return max(1e-6, min(intersection_w / width, intersection_h / height))
 
 
+def _crop_safety_margin(strength: float, smooth: float, keep_fov: float) -> float:
+    base_margin = 0.005  # 0.5% baseline to hide interpolation fringing
+    strength_term = 0.02 * np.clip(strength, 0.0, 1.0)
+    smooth_term = 0.01 * np.clip(smooth, 0.0, 1.0)
+    keep_term = 0.03 * np.clip(1.0 - keep_fov, 0.0, 1.0)
+    margin = base_margin + strength_term + smooth_term + keep_term
+    return float(np.clip(margin, 0.0, 0.08))
+
+
 def _prepare_expand_transform(
     mins: np.ndarray,
     maxs: np.ndarray,
@@ -620,12 +629,20 @@ def _stabilize_frames(
 
         intersection_w = max(1.0, x1 - x0)
         intersection_h = max(1.0, y1 - y0)
-        crop_w = intersection_w
-        crop_h = intersection_h
+        margin_ratio = _crop_safety_margin(
+            strength * strength_effective_factor,
+            smooth,
+            keep_fov_clamped if keep_fov_applied else 1.0,
+        )
+        shrink_factor = max(0.0, 1.0 - margin_ratio)
+        crop_w = max(1.0, intersection_w * shrink_factor)
+        crop_h = max(1.0, intersection_h * shrink_factor)
         center_x = (x0 + x1) * 0.5
         center_y = (y0 + y1) * 0.5
         crop_x0 = center_x - crop_w * 0.5
         crop_y0 = center_y - crop_h * 0.5
+        crop_x0 = float(np.clip(crop_x0, 0.0, max(context.width - crop_w, 0.0)))
+        crop_y0 = float(np.clip(crop_y0, 0.0, max(context.height - crop_h, 0.0)))
 
         scale_x = context.width / crop_w
         scale_y = context.height / crop_h
@@ -647,6 +664,7 @@ def _stabilize_frames(
                 "crop_size": [crop_w, crop_h],
                 "actual_content_ratio": actual_ratio,
                 "keep_fov_effective": actual_ratio,
+                "crop_safety_margin_ratio": margin_ratio,
             }
         )
         output_size = (context.width, context.height)

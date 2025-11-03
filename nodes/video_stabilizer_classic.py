@@ -201,7 +201,7 @@ def _estimate_motion_pair(
         mask=feature_mask,
     )
     if features is None or len(features) < 12:
-        # Lack of tracks – return identity transform and let smoothing handle it.
+        # Lack of tracks - return identity transform and let smoothing handle it.
         return np.eye(3, dtype=np.float32), "translation", 0.0
 
     next_pts, status, _ = cv2.calcOpticalFlowPyrLK(
@@ -434,6 +434,16 @@ def _min_content_ratio(
     return max(1e-6, min(intersection_w / width, intersection_h / height))
 
 
+def _crop_safety_margin(strength: float, smooth: float, keep_fov: float) -> float:
+    """Return a conservative margin ratio reserved to hide residual padding."""
+    base_margin = 0.005  # 0.5% baseline accounts for interpolation fringing
+    strength_term = 0.02 * np.clip(strength, 0.0, 1.0)
+    smooth_term = 0.01 * np.clip(smooth, 0.0, 1.0)
+    keep_term = 0.03 * np.clip(1.0 - keep_fov, 0.0, 1.0)
+    margin = base_margin + strength_term + smooth_term + keep_term
+    return float(np.clip(margin, 0.0, 0.08))
+
+
 def _convert_masks_for_output(masks: Iterable[np.ndarray]) -> Any:
     """Convert internal mask stack to Comfy-compatible outputs."""
     masks_2d: List[np.ndarray] = []
@@ -556,7 +566,7 @@ def _stabilize_frames(
         zero_mask = np.zeros((context.height, context.width, 1), dtype=np.float32)
         meta = {
             "frames": len(frames),
-            "note": "keep_fov≈1.0 in crop mode; returning original frames.",
+            "note": "keep_fov~=1.0 in crop mode; returning original frames.",
             "transform_mode_requested": transform_mode,
             "transform_mode_applied": "identity",
             "camera_lock": camera_lock,
@@ -625,12 +635,20 @@ def _stabilize_frames(
 
         intersection_w = max(1.0, x1 - x0)
         intersection_h = max(1.0, y1 - y0)
-        crop_w = intersection_w
-        crop_h = intersection_h
+        margin_ratio = _crop_safety_margin(
+            strength * strength_effective_factor,
+            smooth,
+            keep_fov_clamped if keep_fov_applied else 1.0,
+        )
+        shrink_factor = max(0.0, 1.0 - margin_ratio)
+        crop_w = max(1.0, intersection_w * shrink_factor)
+        crop_h = max(1.0, intersection_h * shrink_factor)
         center_x = (x0 + x1) * 0.5
         center_y = (y0 + y1) * 0.5
         crop_x0 = center_x - crop_w * 0.5
         crop_y0 = center_y - crop_h * 0.5
+        crop_x0 = float(np.clip(crop_x0, 0.0, max(context.width - crop_w, 0.0)))
+        crop_y0 = float(np.clip(crop_y0, 0.0, max(context.height - crop_h, 0.0)))
 
         scale_x = context.width / crop_w
         scale_y = context.height / crop_h
@@ -652,6 +670,7 @@ def _stabilize_frames(
                 "crop_size": [crop_w, crop_h],
                 "actual_content_ratio": actual_ratio,
                 "keep_fov_effective": actual_ratio,
+                "crop_safety_margin_ratio": margin_ratio,
             }
         )
         output_size = (context.width, context.height)
@@ -949,3 +968,4 @@ class VideoStabilizerClassicExtension(ComfyExtension):
 
     async def get_node_list(self) -> list[type[io.ComfyNode]]:
         return [VideoStabilizerClassic]
+

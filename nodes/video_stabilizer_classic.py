@@ -824,8 +824,8 @@ class VideoStabilizerClassic(io.ComfyNode):
                 step=0.05,
                 display_name="Keep FOV",
                 tooltip=(
-                    "【cropモード専用】入力FOVの保持度（1.0 = ズーム0, 0.0 = 最大ズーム許容）。"
-                    "crop_and_pad / expand では無視されます。"
+                    "[Crop only] How much of the original FOV to preserve (1.0 = no zoom, 0.0 = maximum zoom). "
+                    "Ignored when framing_mode is crop_and_pad or expand."
                 ),
                 display_mode=io.NumberDisplay.slider,
             ),

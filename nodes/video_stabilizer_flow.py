@@ -589,8 +589,9 @@ def _stabilize_frames(
 
         intersection_w = max(1.0, x1 - x0)
         intersection_h = max(1.0, y1 - y0)
-        crop_w = intersection_w
-        crop_h = intersection_h
+        safety_margin_px = max(1.0, 0.002 * max(context.width, context.height))
+        crop_w = max(1.0, intersection_w - safety_margin_px)
+        crop_h = max(1.0, intersection_h - safety_margin_px)
         center_x = (x0 + x1) * 0.5
         center_y = (y0 + y1) * 0.5
         crop_x0 = center_x - crop_w * 0.5
@@ -616,6 +617,7 @@ def _stabilize_frames(
                 "crop_size": [crop_w, crop_h],
                 "actual_content_ratio": actual_ratio,
                 "keep_fov_effective": actual_ratio,
+                "crop_safety_margin_px": safety_margin_px,
             }
         )
         output_size = (context.width, context.height)

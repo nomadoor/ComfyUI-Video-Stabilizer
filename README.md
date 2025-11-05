@@ -1,4 +1,4 @@
-# ComfyUI Video Stabilizer (Classic / Flow)
+# ComfyUI Video Stabilizer
 
 [![日本語版](https://img.shields.io/badge/README-日本語版-gray.svg)](README_ja.md)
 

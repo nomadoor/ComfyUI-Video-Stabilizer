@@ -4,6 +4,8 @@
 
 ## Overview
 
+https://github.com/user-attachments/assets/598a407f-398e-4540-8d0c-c910f9bcc087
+
 * A video stabilization node for ComfyUI
 * Implements two approaches: **Classic (feature points + LK)** and **Flow (DIS Optical Flow)**
 * Supports three framing modes:

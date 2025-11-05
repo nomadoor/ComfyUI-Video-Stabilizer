@@ -26,6 +26,9 @@ https://github.com/user-attachments/assets/7da060c1-d775-47b7-91e6-f7a2ce147389
 
 ## Parameters (shared by Classic / Flow)
 
+* **frame_rate** (float, default 16.0)
+
+  * Input FPS used to scale the smoothing window. Higher values keep the perceptual smoothing consistent for 30/60/120 fps footage.
 * **transform_mode**
 
   * `translation`: X/Y translation only (most robust and lightweight)
@@ -53,6 +56,12 @@ https://github.com/user-attachments/assets/7da060c1-d775-47b7-91e6-f7a2ce147389
 * **padding_color** (RGB)
 
   * Fill color for outer regions in `crop_and_pad` / `expand` (e.g., `127,127,127`)
+
+---
+
+## Known Issues
+
+* In `crop` mode the current implementation can still emit frames with small padding regions when motion is extreme or `keep_fov` is set close to 1.0. If this happens, either lower `keep_fov` or switch to `crop_and_pad` until the crop logic is reworked in a future update.
 
 ---
 

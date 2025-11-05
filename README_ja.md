@@ -2,6 +2,8 @@
 
 ## 概要
 
+https://github.com/user-attachments/assets/598a407f-398e-4540-8d0c-c910f9bcc087
+
 * ComfyUI 向けの動画手ぶれ補正ノードです
 * **Classic（特徴点 + LK）** と **Flow（DIS Optical Flow）** の 2つの手法を実装しています
 * 3方式のフレーミングがあります：

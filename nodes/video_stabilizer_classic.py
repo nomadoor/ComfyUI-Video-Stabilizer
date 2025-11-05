@@ -345,13 +345,17 @@ def _params_to_matrix(params: np.ndarray, base_mode: TransformMode) -> np.ndarra
     )
 
 
-def _smooth_path(path: np.ndarray, smooth: float) -> np.ndarray:
+def _smooth_path(path: np.ndarray, smooth: float, fps: float) -> np.ndarray:
     """Apply symmetric moving-average smoothing to the path."""
     smooth = float(np.clip(smooth, 0.0, 1.0))
     if smooth <= 0.0 or len(path) <= 2:
         return path.copy()
 
-    window = int(3 + smooth * 10)
+    fps = float(max(1.0, fps))
+    min_seconds = 3.0 / 16.0
+    max_seconds = 13.0 / 16.0
+    window_seconds = min_seconds + smooth * (max_seconds - min_seconds)
+    window = int(round(window_seconds * fps))
     window = max(3, window)
     if window % 2 == 0:
         window += 1
@@ -500,6 +504,7 @@ def _stabilize_frames(
     smooth: float,
     keep_fov: float,
     padding_rgb: Tuple[int, int, int],
+    frame_rate: float,
 ) -> StabilizationResult:
     if cv2 is None:
         raise RuntimeError("OpenCV is required for the video stabilizer node.")
@@ -507,6 +512,11 @@ def _stabilize_frames(
     frames = context.frames
     total_frames = len(frames)
     pbar = ProgressBar(total_frames) if total_frames > 0 else None
+    fps_candidate = frame_rate
+    if not isinstance(fps_candidate, (int, float)) or not np.isfinite(fps_candidate) or fps_candidate <= 0.0:
+        fps_candidate = context.fps if isinstance(context.fps, (int, float)) and np.isfinite(context.fps) and context.fps > 0.0 else 16.0
+    fps_effective = float(max(1.0, fps_candidate))
+    fps_requested = float(frame_rate) if isinstance(frame_rate, (int, float)) and np.isfinite(frame_rate) and frame_rate > 0.0 else None
     if len(frames) == 1:
         zero_mask = np.zeros((context.height, context.width, 1), dtype=np.float32)
         frame_rgb = _ensure_rgb(frames[0])
@@ -553,7 +563,7 @@ def _stabilize_frames(
         smooth = max(smooth, 0.85)
         target_path = np.zeros_like(path)
     else:
-        smooth_path = _smooth_path(path, smooth)
+        smooth_path = _smooth_path(path, smooth, fps_effective)
         target_path = path + strength * (smooth_path - path)
 
     diffs = target_path - path
@@ -573,6 +583,8 @@ def _stabilize_frames(
             "strength": strength,
             "strength_effective": 0.0,
             "smooth": smooth,
+            "fps_requested": fps_requested,
+            "fps_effective": fps_effective,
             "framing": {
                 "mode": framing_mode,
                 "input_size": [context.width, context.height],
@@ -823,6 +835,8 @@ def _stabilize_frames(
         "strength": strength,
         "strength_effective": strength * strength_effective_factor,
         "smooth": smooth,
+        "fps_requested": fps_requested,
+        "fps_effective": fps_effective,
         "framing": framing_meta,
         "keep_fov_applied": keep_fov_applied,
         "padding_color_rgb": list(padding_rgb),
@@ -865,6 +879,14 @@ class VideoStabilizerClassic(io.ComfyNode):
         )
         schema.inputs = [
             io.Image.Input("frames", display_name="Frames"),
+            io.Float.Input(
+                "frame_rate",
+                default=16.0,
+                min=1.0,
+                step=0.1,
+                display_name="Input FPS",
+                tooltip="Frame rate in frames per second used to scale smoothing window.",
+            ),
             io.Combo.Input(
                 "framing_mode",
                 options=["crop", "crop_and_pad", "expand"],
@@ -936,6 +958,7 @@ class VideoStabilizerClassic(io.ComfyNode):
     def execute(
         cls,
         frames: Any,
+        frame_rate: float,
         framing_mode: FramingMode,
         transform_mode: TransformMode,
         camera_lock: bool,
@@ -955,6 +978,7 @@ class VideoStabilizerClassic(io.ComfyNode):
             smooth=smooth,
             keep_fov=keep_fov,
             padding_rgb=padding_rgb,
+            frame_rate=frame_rate,
         )
 
         video_payload = _reconstruct_video(result.frames, context)

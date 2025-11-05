@@ -464,7 +464,7 @@ def _convert_masks_for_output(masks: Iterable[np.ndarray]) -> Any:
 
 def _parse_padding_color(value: str) -> Tuple[int, int, int]:
     """Parse comma-separated RGB string into three clamped ints."""
-    default = (128, 128, 128)
+    default = (127, 127, 127)
     if not isinstance(value, str):
         return default
     parts = [part.strip() for part in value.split(",")]
@@ -920,7 +920,7 @@ class VideoStabilizerClassic(io.ComfyNode):
             ),
             io.String.Input(
                 "padding_color",
-                default="128, 128, 128",
+                default="127, 127, 127",
                 display_name="Padding RGB",
                 tooltip="Comma separated padding color applied in crop_and_pad / expand (e.g. 64, 64, 64).",
             ),

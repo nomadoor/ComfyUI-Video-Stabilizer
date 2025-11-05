@@ -1,62 +1,71 @@
 # ComfyUI Video Stabilizer
 
-動画の手ぶれ補正を行う ComfyUI 向けカスタムノードです
-
 ## 概要
 
-* 2種類のノードがあります
+* ComfyUI 向けの動画手ぶれ補正ノードです
+* **Classic（特徴点 + LK）** と **Flow（DIS Optical Flow）** の 2つの手法を実装しています
+* 3方式のフレーミングがあります：
 
-  * **Classic（VideoStabilizerClassic）**: 特徴点追跡と幾何変換（OpenCV/NumPy）による軽量な補正
-  * **Flow（VideoStabilizerFlow）**: DIS Optical Flow（稠密オプティカルフロー）に基づく高精度補正です。計算コストは高め
-* 画角は「クロップで吸収」または「クロップ最小 + パディング」で吸収します
-* **CROP_and_PAD** ではパディング領域をマスクで出力するため、VACE 等の outpainting と連携できます
+  * 画角をクロップで吸収する **crop**
+  * 可能な範囲はズームで吸収し、残りをパディングする **crop_and_pad**
+  * 入力を全くクロップしないようにキャンバスを拡張する **expand**
+* パディングは**マスクとして出力されるため**、VACE 等の outpainting と連携できます
+
+---
 
 ## ノード一覧
 
-### 1) VideoStabilizerClassic
+* **Video Stabilizer (Classic)** — OpenCV / NumPy による軽量・汎用のスタビライズ
+* **Video Stabilizer (Flow)** — OpenCV **DIS Optical Flow** に基づく高精度スタビライズ（CPUでやや重め）
 
-- OpenCV と NumPy による汎用的な手ぶれ補正です
+---
 
-**パラメータ**
+## パラメータ（UIは Classic / Flow 共通）
 
-* `method`（幾何モデル）
+* **transform_mode**
 
-  * `translation`：平行移動のみです。最もロバストで軽量ですが回転やスケール変化には弱いです
-  * `similarity`：平行移動と回転と等方スケールに対応します。多くのケースで推奨します
-  * `perspective`：射影変換（8 自由度）に対応します。過補正や歪みのリスクが高いため基本は非推奨です
-* `framing`（画角処理）
+  * `translation`：平行移動のみ（最もロバスト・軽量）
+  * `similarity`：平行移動 + 回転 + 等方スケール（多くのケースで推奨）
+  * `perspective`：射影変換（8自由度）。破綻することが多く、おすすめしません
+* **framing_mode**（画角処理）
 
-  * `CROP`：はみ出しをクロップで吸収。画角が狭くなります
-  * `CROP_and_PAD`：クロップ量を抑え、はみ出しをパディングで補います
-* `smoothness`（0.0〜1.0）
+  * `crop`：ズームで縁を隠します（画角は狭くなる）
+  * `crop_and_pad`：ズームしないようにし、足りない分はパディングします
+  * `expand`：全くクロップをせず、全フレームのブレを吸収できるよう、全フレームにパディングを追加します
+* **camera_lock**（bool）
 
-  * 軌跡平滑化の強度です。数値が大きいほど「ねっとり」としたカメラワークになります
-  * 0.2〜0.5 が自然で、0.6 以上はジンバル風になります
-* `stabilize_zoom`（0.0〜1.0）
+  * ON：三脚で撮ったような動画になるよう補正します
+  * 通常スタビライズとは別処理のため、ON の間は下記2つのノブは無効化されます
+* **strength**（0.0〜1.0）
 
-  * クロップ許容量です
-  * `CROP` で 0.0 にするとクロップが行われず、実質ほぼ無効化になります
-  * `CROP_and_PAD` で 0.0 にするとクロップせずパディングのみで吸収します
+  * 推定カメラ運動の **除去量**（どれだけ取り去るか）
+* **smooth**（0.0〜1.0）
 
-**出力**
+  * 時間方向の **平滑化強度**。大きいほどガタが減り、ネットリしたカメラワークになります
+* **keep_fov**（0.0〜1.0、`framing_mode=crop`のときのみ使用）
 
-* 安定化済みフレーム列または動画を出力します
-* `CROP_and_PAD` 選択時は **パディング領域マスク**（白=パディング/黒=元画）も出力します
+  * **1.0 = 入力と同等の画角を維持（ズームしない）**
+  * **0.0 = 縁を隠すため最大限ズーム許容**
+* **padding_color**（RGB）
 
-### 2) VideoStabilizerFlow
+  * `crop_and_pad` / `expand` の外側塗りつぶし色（例 `127,127,127`）
 
-- OpenCV の **DIS Optical Flow** による稠密フローで安定化します。Classic より高精度ですが計算は重いです
+---
 
-**パラメータ**
+## 出力
 
-* `smoothness` / `framing` / `stabilize_zoom` は Classic と同様です
+* **frames_stabilized**：補正済みの動画
+* **padding_mask**：`crop_and_pad` / `expand` でのパディング領域がマスクとして出力されます
+* **meta (JSON)**：推定/適用変換、信頼度、ズーム/パッド比率などの診断情報
+
+---
 
 ## VACE との連携（outpainting）
 
-`CROP_and_PAD` ではパディング領域の **マスク** を同時出力します。これを WAN VACE 等の outpainting に渡すことで、**画角を犠牲にせず** 手ぶれ補正された動画を作成できます
+* `framing_mode=crop_and_pad` または `expand` では、出力される **padding_mask** を VACE 等に渡すことで、**画角を犠牲にせず** 手ぶれ補正後の縁を補完できます
 
-**サンプル workflow**
+**サンプル ワークフロー**
 
-1. `Load Video` → `VideoStabilizerClassic`（framing=`CROP_and_PAD`, stabilize_zoom=低）
-2. 安定化動画とマスクを `VACE (outpainting)` に入力します
-3. 必要に応じて `Composite/Blend` で合成します
+* [Wan2.1_VACE_outpainting_VideoStabilizer.json](example_workflows\Wan2.1_VACE_outpainting_VideoStabilizer.json)
+* [Wan2.2-VACE-Fun_outpainting_VideoStabilizer.json](example_workflows\Wan2.2-VACE-Fun_outpainting_VideoStabilizer.json)
+* [Sample_Video (Pexels)](https://www.pexels.com/ja-jp/video/29507473/)

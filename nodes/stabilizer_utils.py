@@ -321,6 +321,21 @@ def _refine_no_padding_crop(
     x0, y0, w, h = _largest_axis_aligned_rectangle(common)
     crop_w = max(1, w)
     crop_h = max(1, h)
+
+    coverage_ratio = 1.0
+    for mask in masks_bin:
+        roi = mask[y0 : y0 + crop_h, x0 : x0 + crop_w]
+        coords = np.argwhere(roi > 0.5)
+        if coords.size == 0:
+            coverage_ratio = 0.0
+            break
+        y_min, x_min = coords.min(axis=0)
+        y_max, x_max = coords.max(axis=0)
+        covered_w = max(1, x_max - x_min + 1)
+        covered_h = max(1, y_max - y_min + 1)
+        ratio_pre = min(covered_w / float(crop_w), covered_h / float(crop_h))
+        coverage_ratio = min(coverage_ratio, ratio_pre)
+
     scale_x = width / float(crop_w)
     scale_y = height / float(crop_h)
     crop_matrix = np.array(
@@ -334,7 +349,6 @@ def _refine_no_padding_crop(
 
     refined_mats = [crop_matrix @ matrix for matrix in final_matrices]
     refined_masks: List[np.ndarray] = []
-    min_ratio = 1.0
     origin_best = [float(x0), float(y0)]
     size_best = [float(crop_w), float(crop_h)]
 
@@ -350,17 +364,13 @@ def _refine_no_padding_crop(
         mask = (content > 0.5).astype(np.float32)
         refined_masks.append(mask[..., None])
         coords = np.argwhere(mask > 0.5)
-        if coords.size == 0:
-            ratio = 0.0
-        else:
+        if coords.size != 0:
             y_min, x_min = coords.min(axis=0)
             y_max, x_max = coords.max(axis=0)
             size_best = [float(max(1, x_max - x_min + 1)), float(max(1, y_max - y_min + 1))]
             origin_best = [float(x_min), float(y_min)]
-            ratio = min(size_best[0] / width, size_best[1] / height)
-        min_ratio = min(min_ratio, ratio)
 
-    return refined_mats, refined_masks, origin_best, size_best, float(min_ratio)
+    return refined_mats, refined_masks, origin_best, size_best, float(coverage_ratio)
 
 
 def _parse_padding_color(value: str) -> Tuple[int, int, int]:

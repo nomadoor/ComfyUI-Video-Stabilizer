@@ -24,6 +24,9 @@ https://github.com/user-attachments/assets/7da060c1-d775-47b7-91e6-f7a2ce147389
 
 ## パラメータ（UIは Classic / Flow 共通）
 
+* **frame_rate** (float, default 16.0)
+
+  * 平滑化に使う時間窓を入力映像の FPS に合わせて調整します。値を上げると 30/60/120fps の素材でも体感的な平滑度が一定になるように働きます。
 * **transform_mode**
 
   * `translation`：平行移動のみ（最もロバスト・軽量）
@@ -33,7 +36,7 @@ https://github.com/user-attachments/assets/7da060c1-d775-47b7-91e6-f7a2ce147389
 
   * `crop`：ズームで縁を隠します（画角は狭くなる）
   * `crop_and_pad`：ズームしないようにし、足りない分はパディングします
-  * `expand`：全くクロップをせず、全フレームのブレを吸収できるよう、全フレームにパディングを追加します
+  * `expand`：全くクロップをせず、全フレームのブレを吸収できるよう、全フレームにパディングを追加します（キャンバスが拡張されるため、出力解像度は入力より大きくなることがあります）
 * **camera_lock**（bool）
 
   * ON：三脚で撮ったような動画になるよう補正します

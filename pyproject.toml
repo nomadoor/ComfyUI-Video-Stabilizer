@@ -1,7 +1,7 @@
 [project]
 name = "video-stabilizer"
 description = "A video stabilization node for ComfyUI"
-version = "1.0.1"
+version = "1.0.2"
 license = {file = "LICENSE"} 
 # classifiers = [
 #     # For OS-independent nodes (works on all operating systems)

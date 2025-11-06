@@ -38,7 +38,7 @@ https://github.com/user-attachments/assets/7da060c1-d775-47b7-91e6-f7a2ce147389
 
   * `crop`: hide edges by zooming (narrows FOV)
   * `crop_and_pad`: avoid over-zooming and **pad** what still exceeds the frame
-  * `expand`: never crop; add padding across all frames so the entire trajectory fits
+  * `expand`: never crop; add padding across all frames so the entire trajectory fits (the output canvas usually becomes larger than the input resolution because padding surrounds every frame)
 * **camera_lock** (bool)
 
   * ON: enforce a tripod-like look

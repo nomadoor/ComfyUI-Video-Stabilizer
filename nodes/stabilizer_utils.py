@@ -363,12 +363,8 @@ def _refine_no_padding_crop(
         )
         mask = (content > 0.5).astype(np.float32)
         refined_masks.append(mask[..., None])
-        coords = np.argwhere(mask > 0.5)
-        if coords.size != 0:
-            y_min, x_min = coords.min(axis=0)
-            y_max, x_max = coords.max(axis=0)
-            size_best = [float(max(1, x_max - x_min + 1)), float(max(1, y_max - y_min + 1))]
-            origin_best = [float(x_min), float(y_min)]
+        # Keeping origin_best/size_best from pre-scale solve; refined masks
+        # are only used for padding detection downstream.
 
     return refined_mats, refined_masks, origin_best, size_best, float(coverage_ratio)
 

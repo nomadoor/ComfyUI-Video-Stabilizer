@@ -150,8 +150,8 @@ def _compute_crop_with_keep_fov_parametric(
         kernel = np.ones((3, 3), np.uint8)
         masks: List[np.ndarray] = []
         min_ratio = 1.0
-        best_origin: List[float] = [0.0, 0.0]
-        best_size: List[float] = [float(width), float(height)]
+        best_origin: List[float] = list(candidate.get("crop_origin", [0.0, 0.0]))  # type: ignore[index]
+        best_size: List[float] = list(candidate.get("crop_size", [float(width), float(height)]))  # type: ignore[index]
 
         for matrix in candidate["final"]:
             content = cv2.warpPerspective(
@@ -181,8 +181,6 @@ def _compute_crop_with_keep_fov_parametric(
 
             if ratio < min_ratio:
                 min_ratio = ratio
-                best_origin = origin
-                best_size = size
 
         candidate = dict(candidate)
         candidate.update(

@@ -422,8 +422,10 @@ def _min_content_ratio(
     x1 = np.min(maxs[:, 0])
     y1 = np.min(maxs[:, 1])
 
-    intersection_w = max(1.0, x1 - x0)
-    intersection_h = max(1.0, y1 - y0)
+    intersection_w = max(0.0, x1 - x0)
+    intersection_h = max(0.0, y1 - y0)
+    if intersection_w <= 0.0 or intersection_h <= 0.0:
+        return 1e-6
     return max(1e-6, min(intersection_w / width, intersection_h / height))
 
 

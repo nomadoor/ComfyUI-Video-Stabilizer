@@ -22,6 +22,10 @@ try:
 except ImportError:  # pragma: no cover - torch is expected at runtime but optional for typing
     torch = None
 
+try:
+    import comfy.model_management as model_management
+except ImportError:  # pragma: no cover - fallback when comfy isn't available
+    model_management = None
 from comfy_api.latest import ComfyExtension, io
 from comfy.utils import ProgressBar
 
@@ -680,6 +684,10 @@ def _stabilize_frames(
     padding_array = np.array(padding_rgb, dtype=np.float32) / 255.0
     frame_border_value: Any = float(np.mean(padding_array)) if context.channels == 1 else padding_array.tolist()
 
+    frame_count = len(final_matrices)
+    progress_stride = 10
+    progress_pending = 0
+
     for idx, (frame, matrix) in enumerate(zip(frames, final_matrices)):
         warped = cv2.warpPerspective(
             frame,
@@ -708,7 +716,12 @@ def _stabilize_frames(
             padding_detected = True
         padded_ratios.append(float(mask.mean()))
         padding_masks.append(mask)
-        pbar.update(1)
+        progress_pending += 1
+        if progress_pending >= progress_stride or idx == frame_count - 1:
+            pbar.update(progress_pending)
+            progress_pending = 0
+        if model_management is not None:
+            model_management.throw_exception_if_processing_interrupted()
 
     framing_meta["padding_detected"] = padding_detected
 

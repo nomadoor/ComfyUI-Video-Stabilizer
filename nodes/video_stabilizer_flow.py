@@ -45,6 +45,7 @@ from .stabilizer_utils import (
 
 FramingMode = Literal["crop", "crop_and_pad", "expand"]
 TransformMode = Literal["translation", "similarity", "perspective"]
+FlowBackend = Literal["DIS", "TVL1", "phase_correlate"]
 
 JSONType = io.Custom("JSON")
 
@@ -215,6 +216,49 @@ def _create_flow_backend(backend: Literal["DIS", "TVL1"]) -> Any:
     dis.setPatchStride(4)
     dis.setUseSpatialPropagation(True)
     return dis
+
+
+def _select_flow_backend() -> Tuple[FlowBackend, Any | None, str | None]:
+    try:
+        return "DIS", _create_flow_backend("DIS"), None
+    except Exception as exc:
+        dis_error = str(exc) or exc.__class__.__name__
+
+    if _HAS_OPTFLOW:
+        try:
+            return "TVL1", _create_flow_backend("TVL1"), f"DIS unavailable ({dis_error}); using TV-L1."
+        except Exception as exc:
+            tvl1_error = str(exc) or exc.__class__.__name__
+            return (
+                "phase_correlate",
+                None,
+                f"DIS unavailable ({dis_error}); TV-L1 unavailable ({tvl1_error}); using phase correlation.",
+            )
+
+    return "phase_correlate", None, f"DIS unavailable ({dis_error}); cv2.optflow missing; using phase correlation."
+
+
+def _estimate_motion_phase_correlate(prev_gray: np.ndarray, curr_gray: np.ndarray) -> Tuple[np.ndarray, TransformMode, float, float]:
+    try:
+        shift, response = cv2.phaseCorrelate(prev_gray.astype(np.float32), curr_gray.astype(np.float32))
+        tx, ty = float(shift[0]), float(shift[1])
+        confidence = float(response)
+        if not (np.isfinite(tx) and np.isfinite(ty) and np.isfinite(confidence)):
+            raise ValueError("phase correlation returned non-finite values")
+    except Exception:
+        tx = 0.0
+        ty = 0.0
+        confidence = 0.0
+
+    matrix = np.array(
+        [
+            [1.0, 0.0, tx],
+            [0.0, 1.0, ty],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
+    return matrix, "translation", confidence, 0.0
 
 
 def _estimate_motion_flow(
@@ -429,7 +473,8 @@ def _stabilize_frames(
         )
     fps_effective = float(max(1.0, fps_candidate))
     fps_requested = float(frame_rate) if isinstance(frame_rate, (int, float)) and frame_rate > 0.0 else None
-    flow_backend: Literal["DIS", "TVL1"] = "DIS"
+    flow_backend: FlowBackend = "DIS"
+    flow_fallback_reason: str | None = None
 
     if total_frames == 0:
         meta = {
@@ -451,6 +496,7 @@ def _stabilize_frames(
             "keep_fov_applied": False,
             "padding_color_rgb": [int(c) for c in padding_rgb],
             "flow_backend": flow_backend,
+            "flow_fallback_reason": flow_fallback_reason,
             "estimated_motion": {"per_transition": [], "path": [], "target_path": [], "target_path_effective": []},
             "padding_fraction_mean": 0.0,
             "padding_fraction_max": 0.0,
@@ -470,6 +516,7 @@ def _stabilize_frames(
             "framing_mode": framing_mode,
             "keep_fov_applied": False,
             "flow_backend": flow_backend,
+            "flow_fallback_reason": flow_fallback_reason,
             "fps_requested": fps_requested,
             "fps_effective": fps_effective,
         }
@@ -479,11 +526,7 @@ def _stabilize_frames(
     gray_frames = [_make_gray(frame) for frame in frames]
     base_mode = transform_mode
 
-    try:
-        backend_obj = _create_flow_backend(flow_backend)
-    except Exception:
-        flow_backend = "TVL1"
-        backend_obj = _create_flow_backend(flow_backend)
+    flow_backend, backend_obj, flow_fallback_reason = _select_flow_backend()
 
     delta_params: List[np.ndarray] = []
     matrices: List[np.ndarray] = []
@@ -493,12 +536,18 @@ def _stabilize_frames(
 
     active_mode = transform_mode
     for idx in range(1, len(frames)):
-        matrix, used_mode, confidence, residual = _estimate_motion_flow(
-            backend_obj,
-            gray_frames[idx - 1],
-            gray_frames[idx],
-            active_mode,
-        )
+        if backend_obj is None:
+            matrix, used_mode, confidence, residual = _estimate_motion_phase_correlate(
+                gray_frames[idx - 1],
+                gray_frames[idx],
+            )
+        else:
+            matrix, used_mode, confidence, residual = _estimate_motion_flow(
+                backend_obj,
+                gray_frames[idx - 1],
+                gray_frames[idx],
+                active_mode,
+            )
         if used_mode != active_mode:
             active_mode = used_mode
         matrices.append(matrix)
@@ -738,6 +787,7 @@ def _stabilize_frames(
         "keep_fov_applied": keep_fov_applied,
         "padding_color_rgb": list(int(c) for c in padding_rgb),
         "flow_backend": flow_backend,
+        "flow_fallback_reason": flow_fallback_reason,
         "estimated_motion": {
             "per_transition": [
                 {

@@ -24,6 +24,7 @@ dist/
 
 # Local agent state
 .serena/
+.claude/settings.local.json
 
 # Logs
 *.log

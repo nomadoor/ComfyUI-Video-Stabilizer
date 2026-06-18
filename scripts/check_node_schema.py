@@ -71,15 +71,23 @@ def main() -> int:
     failures: list[str] = []
     for relative_path, expected in EXPECTED_NODES.items():
         path = ROOT / relative_path
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        keywords = _schema_keywords(tree)
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            keywords = _schema_keywords(tree)
+            inputs = _io_names(tree, "Input")
+            outputs = _io_names(tree, "Output")
+        except FileNotFoundError:
+            failures.append(f"{relative_path}: file not found")
+            continue
+        except SyntaxError as exc:
+            failures.append(f"{relative_path}: invalid Python syntax: {exc.msg} at line {exc.lineno}")
+            continue
+
         for key, expected_value in expected.items():
             actual = keywords.get(key)
             if actual != expected_value:
                 failures.append(f"{relative_path}: {key} expected {expected_value!r}, got {actual!r}")
 
-        inputs = _io_names(tree, "Input")
-        outputs = _io_names(tree, "Output")
         if inputs != EXPECTED_INPUTS:
             failures.append(f"{relative_path}: input order mismatch: {inputs!r}")
         if outputs != EXPECTED_OUTPUTS:

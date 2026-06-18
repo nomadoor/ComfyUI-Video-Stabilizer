@@ -29,7 +29,7 @@ def main() -> int:
     for path in paths:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception as exc:
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
             failures.append(f"{path}: invalid JSON: {exc}")
             continue
 

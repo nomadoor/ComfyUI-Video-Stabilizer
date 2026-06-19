@@ -655,21 +655,38 @@ def _refine_no_padding_crop(
     return refined_mats, refined_masks, origin_best, size_best, float(coverage_ratio)
 
 
+DEFAULT_PADDING_RGB = (127, 127, 127)
+
+
 def _parse_padding_color(value: str | int) -> Tuple[int, int, int]:
     """Parse a #RRGGBB string or 0xRRGGBB integer into an RGB tuple."""
     if isinstance(value, str):
         stripped = value.strip()
         if "," in stripped or "/" in stripped:
-            parts = stripped.replace("/", ",").replace(" ", ",").split(",")
-            ints = [int(part) for part in parts if part != ""]
-            if len(ints) == 1:
-                ints = [ints[0]] * 3
-            if len(ints) != 3:
-                raise ValueError("Padding color must be #RRGGBB or three comma-separated RGB values.")
-            return tuple(int(np.clip(channel, 0, 255)) for channel in ints)
-        rgb_int = int(stripped.removeprefix("#"), 16)
+            try:
+                parts = stripped.replace("/", ",").replace(" ", ",").split(",")
+                ints = [int(part) for part in parts if part != ""]
+                if len(ints) == 1:
+                    ints = [ints[0]] * 3
+                if len(ints) != 3:
+                    return DEFAULT_PADDING_RGB
+                return tuple(int(np.clip(channel, 0, 255)) for channel in ints)
+            except (TypeError, ValueError):
+                return DEFAULT_PADDING_RGB
+        hex_value = stripped.removeprefix("#")
+        if len(hex_value) == 3:
+            hex_value = "".join(channel * 2 for channel in hex_value)
+        if len(hex_value) != 6:
+            return DEFAULT_PADDING_RGB
+        try:
+            rgb_int = int(hex_value, 16)
+        except (TypeError, ValueError):
+            return DEFAULT_PADDING_RGB
     else:
-        rgb_int = int(value)
+        try:
+            rgb_int = int(value)
+        except (TypeError, ValueError):
+            return DEFAULT_PADDING_RGB
     rgb_int = int(np.clip(rgb_int, 0, 0xFFFFFF))
     return (rgb_int >> 16) & 0xFF, (rgb_int >> 8) & 0xFF, rgb_int & 0xFF
 

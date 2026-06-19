@@ -560,11 +560,11 @@ class VideoStabilizerClassic(io.ComfyNode):
                 ),
                 display_mode=io.NumberDisplay.slider,
             ),
-            io.String.Input(
+            io.Color.Input(
                 "padding_color",
-                default="127, 127, 127",
-                display_name="Padding RGB",
-                tooltip="Comma separated padding color applied in crop_and_pad / expand (e.g. 64, 64, 64).",
+                default="#7F7F7F",
+                display_name="Padding Color",
+                tooltip="HEX padding color applied in crop_and_pad / expand (e.g. #404040).",
             ),
         ]
         schema.outputs = [

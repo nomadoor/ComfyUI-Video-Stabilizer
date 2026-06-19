@@ -71,6 +71,7 @@ def install_comfy_stubs() -> None:
         Custom=lambda name: _CustomType(name),
         Image=_PortFamily,
         Mask=_PortFamily,
+        Color=_PortFamily,
         Float=_PortFamily,
         Combo=_PortFamily,
         Boolean=_PortFamily,

@@ -61,9 +61,9 @@ https://github.com/user-attachments/assets/7da060c1-d775-47b7-91e6-f7a2ce147389
 
   * **1.0 = preserve the input FOV (no zoom)**
   * **0.0 = allow maximum zoom to hide edges**
-* **padding_color** (RGB)
+* **padding_color** (HEX)
 
-  * Fill color for outer regions in `crop_and_pad` / `expand` (e.g., `127,127,127`)
+  * Fill color for outer regions in `crop_and_pad` / `expand` (e.g., `#7F7F7F`). Can be connected from the core Color Picker's `hex` output
 
 ---
 

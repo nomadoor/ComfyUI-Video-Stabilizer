@@ -655,15 +655,23 @@ def _refine_no_padding_crop(
     return refined_mats, refined_masks, origin_best, size_best, float(coverage_ratio)
 
 
-def _parse_padding_color(value: str) -> Tuple[int, int, int]:
-    """Parse user-provided padding color string into RGB tuple."""
-    parts = value.replace("/", ",").replace(" ", ",").split(",")
-    ints = [int(p) for p in parts if p != ""]
-    if len(ints) == 1:
-        ints = [ints[0]] * 3
-    if len(ints) != 3:
-        raise ValueError("Padding color must be one value (grayscale) or three comma-separated values.")
-    return tuple(int(np.clip(c, 0, 255)) for c in ints)
+def _parse_padding_color(value: str | int) -> Tuple[int, int, int]:
+    """Parse a #RRGGBB string or 0xRRGGBB integer into an RGB tuple."""
+    if isinstance(value, str):
+        stripped = value.strip()
+        if "," in stripped or "/" in stripped:
+            parts = stripped.replace("/", ",").replace(" ", ",").split(",")
+            ints = [int(part) for part in parts if part != ""]
+            if len(ints) == 1:
+                ints = [ints[0]] * 3
+            if len(ints) != 3:
+                raise ValueError("Padding color must be #RRGGBB or three comma-separated RGB values.")
+            return tuple(int(np.clip(channel, 0, 255)) for channel in ints)
+        rgb_int = int(stripped.removeprefix("#"), 16)
+    else:
+        rgb_int = int(value)
+    rgb_int = int(np.clip(rgb_int, 0, 0xFFFFFF))
+    return (rgb_int >> 16) & 0xFF, (rgb_int >> 8) & 0xFF, rgb_int & 0xFF
 
 
 def _compute_bounding_boxes(

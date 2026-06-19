@@ -813,7 +813,7 @@
         0.7,
         0.5,
         0.6,
-        "127, 127, 127"
+        "#7F7F7F"
       ],
       "color": "#223",
       "bgcolor": "#335"
@@ -865,7 +865,7 @@
       "outputs": [],
       "properties": {},
       "widgets_values": [
-        "## Parameters\n\n* **transform_mode**\n\n  * `translation`: X/Y translation only\n  * `similarity`: translation + rotation + uniform scale\n  * `perspective`: full projective transform (8 DoF).\n* **framing_mode** (FOV handling)\n\n  * `crop`: hide edges by zooming\n  * `crop_and_pad`: avoid over‑zooming and **pad** what still exceeds the frame\n  * `expand`: never crop; add padding across all frames so the entire trajectory fits\n* **camera_lock**\n\n  * ON: enforce a tripod‑like look\n  * This is a separate solver from normal stabilization, so the two knobs below are disabled while ON\n* **strength** (0.0–1.0)\n\n  * **Removal gain** of the estimated camera motion\n* **smooth** (0.0–1.0)\n\n  * Temporal **smoothing strength**. Higher values reduce jitter but yield a more “viscous” camera motion\n* **keep_fov** (0.0–1.0, **used only when `framing_mode=crop`**)\n\n  * **1.0 = preserve the input FOV (no zoom)**\n  * **0.0 = allow maximum zoom to hide edges**\n* **padding_color** (RGB)\n\n  * Fill color for outer regions in `crop_and_pad` / `expand` (e.g., `128,128,128`)"
+        "## Parameters\n\n* **transform_mode**\n\n  * `translation`: X/Y translation only\n  * `similarity`: translation + rotation + uniform scale\n  * `perspective`: full projective transform (8 DoF).\n* **framing_mode** (FOV handling)\n\n  * `crop`: hide edges by zooming\n  * `crop_and_pad`: avoid over‑zooming and **pad** what still exceeds the frame\n  * `expand`: never crop; add padding across all frames so the entire trajectory fits\n* **camera_lock**\n\n  * ON: enforce a tripod‑like look\n  * This is a separate solver from normal stabilization, so the two knobs below are disabled while ON\n* **strength** (0.0–1.0)\n\n  * **Removal gain** of the estimated camera motion\n* **smooth** (0.0–1.0)\n\n  * Temporal **smoothing strength**. Higher values reduce jitter but yield a more “viscous” camera motion\n* **keep_fov** (0.0–1.0, **used only when `framing_mode=crop`**)\n\n  * **1.0 = preserve the input FOV (no zoom)**\n  * **0.0 = allow maximum zoom to hide edges**\n* **padding_color** (HEX)\n\n  * Fill color for outer regions in `crop_and_pad` / `expand` (e.g., `#7F7F7F`)"
       ],
       "color": "#223",
       "bgcolor": "#335"

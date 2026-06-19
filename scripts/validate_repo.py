@@ -45,6 +45,7 @@ def main() -> int:
         ("python syntax", check_py_compile),
         ("node schema", lambda: run_script("scripts/check_node_schema.py")),
         ("workflow json", lambda: run_script("scripts/check_workflows.py")),
+        ("inverse stabilization", lambda: run_script("scripts/check_inverse_stabilization.py")),
     ]
 
     failed: list[str] = []

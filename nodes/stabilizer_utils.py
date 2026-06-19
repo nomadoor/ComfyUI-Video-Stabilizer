@@ -793,7 +793,7 @@ def _apply_inverse_stabilization(
     padding_array = np.array(padding_rgb, dtype=np.float32) / 255.0
     frame_border_value: Any = float(np.mean(padding_array)) if context.channels == 1 else padding_array.tolist()
 
-    for idx, (frame, entry) in enumerate(zip(context.frames, per_frame)):
+    for idx, (frame, entry) in enumerate(zip(context.frames, per_frame, strict=True)):
         matrix = _read_applied_matrix(entry, idx)
         try:
             inverse_matrix = np.linalg.inv(matrix)

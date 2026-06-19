@@ -611,6 +611,7 @@ def _stabilize_frames(
                 },
                 "keep_fov_applied": False,
                 "flow_backend": flow_backend,
+                "flow_fallback_reason": flow_fallback_reason,
                 "estimated_motion": {
                     "per_transition": [],
                     "path": path.tolist(),

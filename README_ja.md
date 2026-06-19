@@ -26,6 +26,7 @@ https://github.com/user-attachments/assets/7da060c1-d775-47b7-91e6-f7a2ce147389
 
 * OpenCV が必要です。依存関係として `opencv-python-headless>=4.8,<5` を宣言しています
 * Flow ノードは通常 DIS Optical Flow を使います。TV-L1 は optional で、`cv2.optflow` が利用できる場合のみ使います
+* optical flow backend が使えない場合は phase-correlation による平行移動推定に退化し、それも失敗した場合は identity に退化します
 
 ---
 

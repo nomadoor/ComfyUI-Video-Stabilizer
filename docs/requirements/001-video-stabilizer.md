@@ -64,6 +64,8 @@ Last updated: 2025‑11‑03 (UTC+9)
 * `padding_mask`: IMAGE_SEQUENCE (**always emitted**; all‑zeros for `crop`, padding=1.0 for `crop_and_pad`/`expand`)
 * `meta`: JSON (per‑frame parameters such as θ, tx, ty, log_s, confidences, applied vs. estimated transforms)
 
+`meta.stabilization_warp` records the exact per-frame matrices passed to `cv2.warpPerspective` using the `source_to_stabilized` convention. It includes source size, output size, framing mode, and per-frame applied matrices so downstream nodes can apply the inverse warp.
+
 ---
 
 ## 04. Internal Design Guidance (implementation‑free contract)
@@ -129,3 +131,12 @@ Last updated: 2025‑11‑03 (UTC+9)
 * **Performance:** CPU‑only, target ≥5 fps at 1080p30 (baseline); algorithm scales predictably
 * **Dependencies:** OpenCV (GFTT/LK, RANSAC, etc.); avoid GPU‑only dependencies
 * **Maintainability:** clear separation of estimation/apply, test suite, CI long‑run checks
+
+---
+
+## 09. Inverse Stabilization
+
+* `Video Stabilizer Inverse` consumes edited stabilized frames plus `meta.stabilization_warp`.
+* Output canvas is always `stabilization_warp.source_size`.
+* The node applies `np.linalg.inv(applied_matrix)` per frame and emits a padding mask.
+* `expand` is the recommended framing mode. `crop` / `crop_and_pad` can restore motion/canvas placement, but pixels discarded during stabilization are not recoverable.

@@ -32,6 +32,7 @@ NODE_FILES = [
     "nodes/stabilizer_utils.py",
     "nodes/video_stabilizer_classic.py",
     "nodes/video_stabilizer_flow.py",
+    "nodes/video_stabilizer_inverse.py",
 ]
 ATOL = 1e-5
 RTOL = 1e-5
@@ -63,6 +64,9 @@ def port_family(port_type: str) -> type[_TypedPortFamily]:
 class _CustomType:
     def __init__(self, name: str) -> None:
         self.custom_name = name
+
+    def Input(self, name: str, **kwargs: Any) -> dict[str, Any]:
+        return {"direction": "input", "custom_type": self.custom_name, "name": name, **kwargs}
 
     def Output(self, name: str, **kwargs: Any) -> dict[str, Any]:
         return {"direction": "output", "custom_type": self.custom_name, "name": name, **kwargs}
@@ -147,7 +151,12 @@ def load_version(ref: str, temp_root: Path) -> dict[str, Any]:
     sys.modules[f"{package_name}.nodes"] = nodes_package
 
     modules: dict[str, Any] = {}
-    for short_name in ("stabilizer_utils", "video_stabilizer_classic", "video_stabilizer_flow"):
+    for short_name in (
+        "stabilizer_utils",
+        "video_stabilizer_classic",
+        "video_stabilizer_flow",
+        "video_stabilizer_inverse",
+    ):
         module_name = f"{package_name}.nodes.{short_name}"
         path = package_root / "nodes" / f"{short_name}.py"
         if not path.exists():

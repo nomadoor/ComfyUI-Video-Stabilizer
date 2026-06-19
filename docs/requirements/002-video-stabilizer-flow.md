@@ -24,6 +24,7 @@ Last updated: 2025‑11‑03 (UTC+9)
 
 * Always emit `padding_mask` (all‑zeros for `crop`)
 * In `meta`, add fields such as `flow_backend: "DIS"|"TVL1"`, `flow_pyramid_levels`, and summary confidences if useful
+* Also emit the shared `meta.stabilization_warp` contract from the Classic spec, using the exact matrices passed to `cv2.warpPerspective`
 
 ---
 

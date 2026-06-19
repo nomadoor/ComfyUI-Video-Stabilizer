@@ -20,9 +20,12 @@ ParamsToMatrix = Callable[[np.ndarray, TransformMode], np.ndarray]
 __all__ = [
     "FrameAdapter",
     "FramingMode",
+    "InverseStabilizationResult",
     "StabilizationResult",
     "TransformMode",
     "VideoContext",
+    "_apply_inverse_stabilization",
+    "_build_stabilization_warp_meta",
     "_ensure_rgb",
     "_make_gray",
     "_matrix_to_params",
@@ -66,6 +69,13 @@ class VideoContext:
 
 @dataclass
 class StabilizationResult:
+    frames: List[np.ndarray]
+    masks: List[np.ndarray]
+    meta: Dict[str, Any]
+
+
+@dataclass
+class InverseStabilizationResult:
     frames: List[np.ndarray]
     masks: List[np.ndarray]
     meta: Dict[str, Any]
@@ -689,6 +699,140 @@ def _parse_padding_color(value: str | int) -> Tuple[int, int, int]:
             return DEFAULT_PADDING_RGB
     rgb_int = int(np.clip(rgb_int, 0, 0xFFFFFF))
     return (rgb_int >> 16) & 0xFF, (rgb_int >> 8) & 0xFF, rgb_int & 0xFF
+
+
+def _build_stabilization_warp_meta(
+    *,
+    source_size: Tuple[int, int],
+    output_size: Tuple[int, int],
+    framing_mode: FramingMode,
+    applied_matrices: Sequence[np.ndarray],
+) -> Dict[str, Any]:
+    """Describe the exact per-frame matrices applied during stabilization."""
+    return {
+        "source_size": [int(source_size[0]), int(source_size[1])],
+        "output_size": [int(output_size[0]), int(output_size[1])],
+        "framing_mode": framing_mode,
+        "matrix_convention": "source_to_stabilized",
+        "per_frame": [
+            {
+                "index": int(idx),
+                "applied_matrix": np.asarray(matrix, dtype=np.float32).tolist(),
+            }
+            for idx, matrix in enumerate(applied_matrices)
+        ],
+    }
+
+
+def _read_size_pair(meta: Dict[str, Any], key: str) -> Tuple[int, int]:
+    value = meta.get(key)
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ValueError(f"stabilization_warp.{key} must be [width, height].")
+    try:
+        width = int(value[0])
+        height = int(value[1])
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"stabilization_warp.{key} must contain integer width/height.") from exc
+    if width <= 0 or height <= 0:
+        raise ValueError(f"stabilization_warp.{key} must contain positive width/height.")
+    return width, height
+
+
+def _read_applied_matrix(entry: Any, expected_index: int) -> np.ndarray:
+    if not isinstance(entry, dict):
+        raise ValueError(f"stabilization_warp.per_frame[{expected_index}] must be an object.")
+    if entry.get("index") != expected_index:
+        raise ValueError(
+            f"stabilization_warp.per_frame[{expected_index}].index must be {expected_index}, "
+            f"got {entry.get('index')!r}."
+        )
+    if "applied_matrix" not in entry:
+        raise ValueError(f"stabilization_warp.per_frame[{expected_index}].applied_matrix is missing.")
+    matrix = np.asarray(entry["applied_matrix"], dtype=np.float64)
+    if matrix.shape != (3, 3):
+        raise ValueError(f"stabilization_warp.per_frame[{expected_index}].applied_matrix must be 3x3.")
+    return matrix
+
+
+def _apply_inverse_stabilization(
+    context: VideoContext,
+    meta: Dict[str, Any],
+    padding_rgb: Tuple[int, int, int],
+) -> InverseStabilizationResult:
+    """Apply inverse stabilization matrices and restore frames to the original canvas size."""
+    if not isinstance(meta, dict):
+        raise ValueError("meta must be a dictionary containing stabilization_warp.")
+    warp_meta = meta.get("stabilization_warp")
+    if not isinstance(warp_meta, dict):
+        raise ValueError("meta.stabilization_warp is required for inverse stabilization.")
+    if warp_meta.get("matrix_convention") != "source_to_stabilized":
+        raise ValueError(
+            "stabilization_warp.matrix_convention must be 'source_to_stabilized' "
+            f"for inverse stabilization, got {warp_meta.get('matrix_convention')!r}."
+        )
+
+    source_size = _read_size_pair(warp_meta, "source_size")
+    output_size = _read_size_pair(warp_meta, "output_size")
+    if (context.width, context.height) != output_size:
+        raise ValueError(
+            "Input frames must match stabilization_warp.output_size "
+            f"{output_size}, got {(context.width, context.height)}."
+        )
+
+    per_frame = warp_meta.get("per_frame")
+    if not isinstance(per_frame, list):
+        raise ValueError("stabilization_warp.per_frame must be a list.")
+    if len(per_frame) != len(context.frames):
+        raise ValueError(
+            "Frame count mismatch: "
+            f"got {len(context.frames)} frame(s), metadata has {len(per_frame)} matrix entry/entries."
+        )
+
+    restored_frames: List[np.ndarray] = []
+    padding_masks: List[np.ndarray] = []
+    padding_array = np.array(padding_rgb, dtype=np.float32) / 255.0
+    frame_border_value: Any = float(np.mean(padding_array)) if context.channels == 1 else padding_array.tolist()
+
+    for idx, (frame, entry) in enumerate(zip(context.frames, per_frame)):
+        matrix = _read_applied_matrix(entry, idx)
+        try:
+            inverse_matrix = np.linalg.inv(matrix)
+        except np.linalg.LinAlgError as exc:
+            raise ValueError(f"stabilization_warp.per_frame[{idx}].applied_matrix is not invertible.") from exc
+
+        restored = cv2.warpPerspective(
+            frame,
+            inverse_matrix.astype(np.float32),
+            source_size,
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=frame_border_value,
+        )
+        restored_frames.append(_ensure_rgb(restored.astype(np.float32)))
+
+        content = cv2.warpPerspective(
+            np.ones((context.height, context.width), dtype=np.float32),
+            inverse_matrix.astype(np.float32),
+            source_size,
+            flags=cv2.INTER_NEAREST,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0.0,
+        )
+        mask = (1.0 - (content > 0.5).astype(np.float32))[..., np.newaxis]
+        mask[mask < 1e-3] = 0.0
+        padding_masks.append(mask)
+
+    result_meta = dict(meta)
+    result_meta["inverse_stabilization"] = {
+        "source_size": [int(source_size[0]), int(source_size[1])],
+        "input_size": [int(output_size[0]), int(output_size[1])],
+        "output_size": [int(source_size[0]), int(source_size[1])],
+        "matrix_convention": "stabilized_to_source",
+        "source_matrix_convention": warp_meta.get("matrix_convention"),
+        "framing_mode": warp_meta.get("framing_mode"),
+        "note": "Restores original motion/canvas; pixels discarded by crop framing cannot be recovered.",
+    }
+    return InverseStabilizationResult(restored_frames, padding_masks, result_meta)
 
 
 def _compute_bounding_boxes(

@@ -9,7 +9,7 @@ Last updated: 2025‑11‑03 (UTC+9)
 ## A. Purpose & Scope — Delta
 
 * Use **dense optical flow (CPU)** as the primary signal for stabilization instead of sparse feature tracks
-* Default backend: **OpenCV DIS (Dense Inverse Search)** for speed on CPU; optional fallback: **TV‑L1** (slower, more robust)
+* Default backend: **OpenCV DIS (Dense Inverse Search)** for speed on CPU; optional fallback: **TV‑L1** when `cv2.optflow` is available
 
 ---
 
@@ -68,7 +68,7 @@ Last updated: 2025‑11‑03 (UTC+9)
 ## F. Failure & Fallback — Delta
 
 * When low‑texture or subject‑dominant frames reduce flow reliability, **degrade `transform_mode`** exactly like Classic
-* If DIS fails systematically, switch internally to **TV‑L1**; if it still fails, **force `translation`**
+* If DIS backend creation fails, try **TV‑L1** only when `cv2.optflow` is available; otherwise fall back to optical-flow-independent translation estimation, then identity if translation estimation fails
 
 ---
 

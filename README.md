@@ -24,6 +24,14 @@ https://github.com/user-attachments/assets/7da060c1-d775-47b7-91e6-f7a2ce147389
 
 ---
 
+## Requirements
+
+* OpenCV is required and declared as `opencv-python-headless>=4.8,<5`
+* The Flow node uses DIS Optical Flow by default. TV-L1 is optional and is used only when available through `cv2.optflow`
+* If optical-flow backends are unavailable, Flow falls back to phase-correlation translation, then identity if that also fails
+
+---
+
 ## Parameters (shared by Classic / Flow)
 
 * **frame_rate** (float, default 16.0)
@@ -76,4 +84,3 @@ https://github.com/user-attachments/assets/7da060c1-d775-47b7-91e6-f7a2ce147389
 * [Wan2.1_VACE_outpainting_VideoStabilizer.json](example_workflows/Wan2.1_VACE_outpainting_VideoStabilizer.json)
 * [Wan2.2-VACE-Fun_outpainting_VideoStabilizer.json](example_workflows/Wan2.2-VACE-Fun_outpainting_VideoStabilizer.json)
 * [Sample_Video (Pexels)](https://www.pexels.com/ja-jp/video/29507473/)
-

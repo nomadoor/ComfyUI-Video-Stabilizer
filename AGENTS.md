@@ -48,5 +48,6 @@ Use the relevant skill before substantial work:
 - `.claude/skills/workflow-update/SKILL.md`
 - `.claude/skills/docs-sync/SKILL.md`
 - `.claude/skills/release-check/SKILL.md`
+- `.claude/skills/pr-readiness-check/SKILL.md`
 - `.claude/skills/dependency-audit/SKILL.md`
 - `.claude/skills/article-or-announcement/SKILL.md`

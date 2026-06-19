@@ -59,9 +59,9 @@ https://github.com/user-attachments/assets/7da060c1-d775-47b7-91e6-f7a2ce147389
 
   * **1.0 = 入力と同等の画角を維持（ズームしない）**
   * **0.0 = 縁を隠すため最大限ズーム許容**
-* **padding_color**（RGB）
+* **padding_color**（HEX）
 
-  * `crop_and_pad` / `expand` の外側塗りつぶし色（例 `127,127,127`）
+  * `crop_and_pad` / `expand` の外側塗りつぶし色（例 `#7F7F7F`）。core の Color Picker の `hex` 出力を接続できます
 
 ---
 

@@ -15,6 +15,7 @@ PYTHON_FILES = [
     "nodes/stabilizer_utils.py",
     "nodes/video_stabilizer_classic.py",
     "nodes/video_stabilizer_flow.py",
+    "scripts/compare_refactor_behavior.py",
     "scripts/check_node_schema.py",
     "scripts/check_workflows.py",
 ]

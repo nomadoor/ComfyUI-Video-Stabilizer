@@ -37,9 +37,9 @@ Last updated: 2025‑11‑03 (UTC+9)
 * **keep_fov**: `float 0..1` (effective only when `framing_mode=crop`; ignored otherwise)
 
   * `1.0 = ズーム0 (入力FOVを完全死守)`, `0.0 = 最大ズーム許容` (internally clamped to safe limits)
-* **padding_color**: `string "R, G, B"` (optional border color for `crop_and_pad` / `expand`)
+* **padding_color**: `COLOR "#RRGGBB"` (optional border color for `crop_and_pad` / `expand`)
 
-  * Comma-separated 0–255 integers, e.g., `128, 128, 128`（デフォルトの中間灰色）
+  * HEX color string, e.g., `#7F7F7F`（デフォルトの中間灰色）
 
 > Design note: **Do not fold `camera_lock` into `framing_mode`**. Lock and framing are orthogonal.
 
@@ -56,7 +56,7 @@ Last updated: 2025‑11‑03 (UTC+9)
 * `strength`: FLOAT 0..1 (effective only when `camera_lock=false`)
 * `smooth`: FLOAT 0..1 (effective only when `camera_lock=false`)
 * `keep_fov`: FLOAT 0..1 (used only when `framing_mode=crop`; ignored otherwise)
-* `padding_color`: STRING `"R, G, B"` (border color for `crop_and_pad` / `expand`; ignored in `crop`)
+* `padding_color`: COLOR `"#RRGGBB"` (border color for `crop_and_pad` / `expand`; ignored in `crop`)
 
 ### Outputs
 
@@ -104,7 +104,7 @@ Last updated: 2025‑11‑03 (UTC+9)
 * `strength = 0.7`
 * `smooth = 0.5`
 * `keep_fov = 0.6`
-* `padding_color = "128, 128, 128"`
+* `padding_color = "#7F7F7F"`
 
 ---
 

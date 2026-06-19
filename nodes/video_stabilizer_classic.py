@@ -23,6 +23,7 @@ from comfy_api.latest import ComfyExtension, io
 from comfy.utils import ProgressBar
 
 from .stabilizer_utils import (
+    _build_stabilization_warp_meta,
     _compute_bounding_boxes,
     _compute_crop_with_keep_fov_parametric,
     _convert_masks_for_output,
@@ -186,6 +187,12 @@ def _stabilize_frames(
             },
             "keep_fov_applied": False,
             "padding_color_rgb": [int(c) for c in padding_rgb],
+            "stabilization_warp": _build_stabilization_warp_meta(
+                source_size=(context.width, context.height),
+                output_size=(context.width, context.height),
+                framing_mode=framing_mode,
+                applied_matrices=[],
+            ),
             "estimated_motion": {"per_transition": [], "path": [], "target_path": [], "target_path_effective": []},
             "padding_fraction_mean": 0.0,
             "padding_fraction_max": 0.0,
@@ -202,6 +209,12 @@ def _stabilize_frames(
             "note": "Single-frame input; bypassed stabilization.",
             "transform_mode": transform_mode,
             "framing_mode": framing_mode,
+            "stabilization_warp": _build_stabilization_warp_meta(
+                source_size=(context.width, context.height),
+                output_size=(context.width, context.height),
+                framing_mode=framing_mode,
+                applied_matrices=[np.eye(3, dtype=np.float32)],
+            ),
             "fps_requested": fps_requested,
             "fps_effective": fps_effective,
         }
@@ -284,6 +297,12 @@ def _stabilize_frames(
                     "stabilization_scale": 0.0,
                 },
                 "keep_fov_applied": False,
+                "stabilization_warp": _build_stabilization_warp_meta(
+                    source_size=(context.width, context.height),
+                    output_size=(context.width, context.height),
+                    framing_mode=framing_mode,
+                    applied_matrices=[np.eye(3, dtype=np.float32) for _ in frames],
+                ),
                 "estimated_motion": {
                     "per_transition": [],
                     "path": path.tolist(),
@@ -461,6 +480,12 @@ def _stabilize_frames(
         "framing": framing_meta,
         "keep_fov_applied": keep_fov_applied,
         "padding_color_rgb": [int(c) for c in padding_rgb],
+        "stabilization_warp": _build_stabilization_warp_meta(
+            source_size=(context.width, context.height),
+            output_size=output_size,
+            framing_mode=framing_mode,
+            applied_matrices=final_matrices,
+        ),
         "estimated_motion": {
             "per_transition": [
                 {

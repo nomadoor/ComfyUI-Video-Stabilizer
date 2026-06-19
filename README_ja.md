@@ -1,86 +1,79 @@
 # ComfyUI Video Stabilizer
 
-## 概要
+[![English](https://img.shields.io/badge/README-English-gray.svg)](README.md)
+
+CPU で扱いやすい動画手ぶれ補正、padding mask 出力、元の動きへ戻す inverse workflow のための ComfyUI custom node です。
+
+補正方法別に２種類のノードがあります。
+
+- **Classic**: OpenCV / NumPy による特徴点トラッキング
+- **Flow**: OpenCV DIS を標準で使う dense optical flow
 
 https://github.com/user-attachments/assets/7da060c1-d775-47b7-91e6-f7a2ce147389
 
-* ComfyUI 向けの動画手ぶれ補正ノードです
-* **Classic（特徴点 + LK）** と **Flow（DIS Optical Flow）** の 2つの手法を実装しています
-* 3方式のフレーミングがあります：
+## インストール
 
-  * 画角をクロップで吸収する **crop**
-  * 可能な範囲はズームで吸収し、残りをパディングする **crop_and_pad**
-  * 入力を全くクロップしないようにキャンバスを拡張する **expand**
-* パディングは**マスクとして出力されるため**、VACE 等の outpainting と連携できます
+- ComfyUI Manager からインストールしてください。
 
----
+## ノード
 
-## ノード一覧
+| Node | 役割 |
+| --- | --- |
+| `Video Stabilizer (Classic)` | 特徴点トラッキングによる軽量な汎用 stabilizer。 |
+| `Video Stabilizer (Flow)` | DIS optical flow による高精度 stabilizer。`cv2.optflow` が利用可能な場合のみ TV-L1 も使えます。 |
+| `Video Stabilizer Inverse` | 補正した分の手ブレを、編集後のフレームに戻します。 |
 
-* **Video Stabilizer (Classic)** — OpenCV / NumPy による軽量・汎用のスタビライズ
-* **Video Stabilizer (Flow)** — OpenCV **DIS Optical Flow** に基づく高精度スタビライズ（CPUでやや重め）
+Flow は通常 DIS optical flow を使います。使えない場合は TV-L1、平行移動推定、identity の順に自動で fallback します。
 
----
+## 使い方
 
-## 必要環境
+動画、またはバッチ画像を `Video Stabilizer (Classic)` もしくは `Video Stabilizer (Flow)` に入力します。
 
-* OpenCV が必要です。依存関係として `opencv-python-headless>=4.8,<5` を宣言しています
-* Flow ノードは通常 DIS Optical Flow を使います。TV-L1 は optional で、`cv2.optflow` が利用できる場合のみ使います
-* optical flow backend が使えない場合は phase-correlation による平行移動推定に退化し、それも失敗した場合は identity に退化します
+`padding_mask` は、手ブレ補正でできた余白を VACE などで補完したいときに使います。
 
----
+## パラメータ
 
-## パラメータ（UIは Classic / Flow 共通）
+Classic / Flow 共通:
 
-* **frame_rate** (float, default 16.0)
+| Parameter | Default | 説明 |
+| --- | ---: | --- |
+| `frame_rate` | `16.0` | 時間方向の smoothing window を入力 FPS に合わせます。 |
+| `framing_mode` | `crop_and_pad` | `crop`, `crop_and_pad`, `expand` から選択します。 |
+| `transform_mode` | `similarity` | `translation`, `similarity`, `perspective` から選択します。 |
+| `camera_lock` | `false` | 三脚で撮ったような結果へ強めに寄せます。 |
+| `strength` | `0.7` | 推定したカメラ運動をどれだけ除去するか。`camera_lock` 中は無視されます。 |
+| `smooth` | `0.5` | 時間方向の平滑化量。`camera_lock` 中は無視されます。 |
+| `keep_fov` | `0.6` | crop mode の画角維持量。`1.0` はズームなし、`0.0` は最大ズーム許容。 |
+| `padding_color` | `#7F7F7F` | padding 領域の HEX 色。core Color Picker の `hex` 出力を接続できます。 |
 
-  * 平滑化に使う時間窓を入力映像の FPS に合わせて調整します。値を上げると 30/60/120fps の素材でも体感的な平滑度が一定になるように働きます。
-* **transform_mode**
+Framing mode:
 
-  * `translation`：平行移動のみ（最もロバスト・軽量）
-  * `similarity`：平行移動 + 回転 + 等方スケール（多くのケースで推奨）
-  * `perspective`：射影変換（8自由度）。破綻することが多く、おすすめしません
-* **framing_mode**（画角処理）
-
-  * `crop`：ズームで縁を隠します（画角は狭くなる）
-  * `crop_and_pad`：ズームしないようにし、足りない分はパディングします
-  * `expand`：全くクロップをせず、全フレームのブレを吸収できるよう、全フレームにパディングを追加します（キャンバスが拡張されるため、出力解像度は入力より大きくなることがあります）
-* **camera_lock**（bool）
-
-  * ON：三脚で撮ったような動画になるよう補正します
-  * 通常スタビライズとは別処理のため、ON の間は下記2つのノブは無効化されます
-* **strength**（0.0〜1.0）
-
-  * 推定カメラ運動の **除去量**（どれだけ取り去るか）
-* **smooth**（0.0〜1.0）
-
-  * 時間方向の **平滑化強度**。大きいほどガタが減り、ネットリしたカメラワークになります
-* **keep_fov**（0.0〜1.0、`framing_mode=crop`のときのみ使用）
-
-  * **1.0 = 入力と同等の画角を維持（ズームしない）**
-  * **0.0 = 縁を隠すため最大限ズーム許容**
-* **padding_color**（HEX）
-
-  * `crop_and_pad` / `expand` の外側塗りつぶし色（例 `#7F7F7F`）。core の Color Picker の `hex` 出力を接続できます
-
----
+| Mode | 動作 |
+| --- | --- |
+| `crop` | ズーム/クロップで縁を隠します。画角は狭くなります。 |
+| `crop_and_pad` | ズームを抑え、不足分を padding します。 |
+| `expand` | 全く crop せず、必要な分だけキャンバスを拡張します。 |
 
 ## 出力
 
-* **frames_stabilized**：補正済みの動画
-* **padding_mask**：`crop_and_pad` / `expand` でのパディング領域がマスクとして出力されます
-* **meta (JSON)**：推定/適用変換、信頼度、ズーム/パッド比率などの診断情報
+| Output | 説明 |
+| --- | --- |
+| `frames_stabilized` | 補正済みフレーム。 |
+| `padding_mask` | padding / 欠損領域の mask。 |
+| `meta` | 推定 motion と実際に適用した補正行列を含む JSON 診断情報。 |
 
----
+## Inverse stabilization
 
-## VACE との連携（outpainting）
+`Video Stabilizer Inverse` は、手ブレ補正した動画に後処理をしたあと、補正した分の手ブレをもう一度戻すためのノードです。
 
-* `framing_mode=crop_and_pad` または `expand` では、出力される **padding_mask** を VACE 等に渡すことで、**画角を犠牲にせず** 手ぶれ補正後の縁を補完できます
+`crop` / `crop_and_pad` では仕組み上、最後にほぼ必ず隙間ができます。Inverse まで使う場合は `expand` がオススメです。
 
-**サンプル ワークフロー**
+## サンプル Workflow
 
-* [Wan2.1_VACE_outpainting_VideoStabilizer.json](example_workflows/Wan2.1_VACE_outpainting_VideoStabilizer.json)
-* [Wan2.2-VACE-Fun_outpainting_VideoStabilizer.json](example_workflows/Wan2.2-VACE-Fun_outpainting_VideoStabilizer.json)
-* [Sample_Video (Pexels)](https://www.pexels.com/ja-jp/video/29507473/)
+- [Wan2.1_VACE_outpainting_VideoStabilizer.json](example_workflows/Wan2.1_VACE_outpainting_VideoStabilizer.json)
+- [Wan2.2-VACE-Fun_outpainting_VideoStabilizer.json](example_workflows/Wan2.2-VACE-Fun_outpainting_VideoStabilizer.json)
+- [Sample Video (Pexels)](https://www.pexels.com/ja-jp/video/29507473/)
 
----
+## License
+
+MIT

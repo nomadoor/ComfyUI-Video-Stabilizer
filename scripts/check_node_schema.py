@@ -12,24 +12,42 @@ EXPECTED_NODES = {
     "nodes/video_stabilizer_classic.py": {
         "node_id": "video_stabilizer_classic",
         "display_name": "Video Stabilizer (Classic)",
+        "inputs": [
+            "frames",
+            "frame_rate",
+            "framing_mode",
+            "transform_mode",
+            "camera_lock",
+            "strength",
+            "smooth",
+            "keep_fov",
+            "padding_color",
+        ],
+        "outputs": ["frames_stabilized", "padding_mask", "meta"],
     },
     "nodes/video_stabilizer_flow.py": {
         "node_id": "video_stabilizer_flow",
         "display_name": "Video Stabilizer (Flow)",
+        "inputs": [
+            "frames",
+            "frame_rate",
+            "framing_mode",
+            "transform_mode",
+            "camera_lock",
+            "strength",
+            "smooth",
+            "keep_fov",
+            "padding_color",
+        ],
+        "outputs": ["frames_stabilized", "padding_mask", "meta"],
+    },
+    "nodes/video_stabilizer_inverse.py": {
+        "node_id": "video_stabilizer_inverse",
+        "display_name": "Video Stabilizer Inverse",
+        "inputs": ["frames", "meta", "padding_color"],
+        "outputs": ["frames_restored", "padding_mask", "meta"],
     },
 }
-EXPECTED_INPUTS = [
-    "frames",
-    "frame_rate",
-    "framing_mode",
-    "transform_mode",
-    "camera_lock",
-    "strength",
-    "smooth",
-    "keep_fov",
-    "padding_color",
-]
-EXPECTED_OUTPUTS = ["frames_stabilized", "padding_mask", "meta"]
 
 
 def _literal_string(node: ast.AST) -> str | None:
@@ -83,14 +101,15 @@ def main() -> int:
             failures.append(f"{relative_path}: invalid Python syntax: {exc.msg} at line {exc.lineno}")
             continue
 
-        for key, expected_value in expected.items():
+        for key in ("node_id", "display_name"):
+            expected_value = expected[key]
             actual = keywords.get(key)
             if actual != expected_value:
                 failures.append(f"{relative_path}: {key} expected {expected_value!r}, got {actual!r}")
 
-        if inputs != EXPECTED_INPUTS:
+        if inputs != expected["inputs"]:
             failures.append(f"{relative_path}: input order mismatch: {inputs!r}")
-        if outputs != EXPECTED_OUTPUTS:
+        if outputs != expected["outputs"]:
             failures.append(f"{relative_path}: output order mismatch: {outputs!r}")
 
     if failures:

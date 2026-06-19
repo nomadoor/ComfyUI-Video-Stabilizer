@@ -2,85 +2,78 @@
 
 [![日本語版](https://img.shields.io/badge/README-日本語版-gray.svg)](README_ja.md)
 
-## Overview
+A ComfyUI custom node package for CPU-friendly video stabilization, padding mask generation, and inverse motion restore workflows.
+
+It provides two stabilizers:
+
+- **Classic**: sparse feature tracking with OpenCV / NumPy
+- **Flow**: dense optical flow using OpenCV DIS by default
 
 https://github.com/user-attachments/assets/7da060c1-d775-47b7-91e6-f7a2ce147389
 
-* A video stabilization node for ComfyUI
-* Implements two approaches: **Classic (feature points + LK)** and **Flow (DIS Optical Flow)**
-* Supports three framing modes:
+## Installation
 
-  * **crop**: hide shake at the cost of field-of-view (FOV) by zooming/cropping
-  * **crop_and_pad**: limit zoom as much as possible, then pad the remainder
-  * **expand**: never crop; extend the canvas so all stabilized frames are fully contained
-* Padding is **output as a mask**, so you can pass it to outpainting tools such as VACE
+- Install via ComfyUI Manager.
 
----
+## Nodes
 
-## Node List
+| Node | Purpose |
+| --- | --- |
+| `Video Stabilizer (Classic)` | Lightweight general-purpose stabilization using feature tracking. |
+| `Video Stabilizer (Flow)` | Higher-accuracy stabilization using DIS optical flow. TV-L1 is optional when `cv2.optflow` is available. |
+| `Video Stabilizer Inverse` | Adds the removed camera shake back after editing stabilized frames. |
 
-* **Video Stabilizer (Classic)** - Lightweight, general-purpose stabilization using OpenCV / NumPy
-* **Video Stabilizer (Flow)** - Higher-accuracy stabilization based on OpenCV **DIS Optical Flow** (somewhat heavier on CPU)
+Flow normally uses DIS optical flow. If unavailable, it automatically falls back through TV-L1, translation estimation, and identity.
 
----
+## Usage
 
-## Requirements
+Input a video or batched images into either `Video Stabilizer (Classic)` or `Video Stabilizer (Flow)`.
 
-* OpenCV is required and declared as `opencv-python-headless>=4.8,<5`
-* The Flow node uses DIS Optical Flow by default. TV-L1 is optional and is used only when available through `cv2.optflow`
-* If optical-flow backends are unavailable, Flow falls back to phase-correlation translation, then identity if that also fails
+Use `padding_mask` when you want VACE or another outpainting workflow to fill borders created by stabilization.
 
----
+## Parameters
 
-## Parameters (shared by Classic / Flow)
+Shared by Classic / Flow:
 
-* **frame_rate** (float, default 16.0)
+| Parameter | Default | Notes |
+| --- | ---: | --- |
+| `frame_rate` | `16.0` | Input FPS used to scale the temporal smoothing window. |
+| `framing_mode` | `crop_and_pad` | `crop`, `crop_and_pad`, or `expand`. |
+| `transform_mode` | `similarity` | `translation`, `similarity`, or `perspective`. |
+| `camera_lock` | `false` | Pulls motion toward a tripod-like result. |
+| `strength` | `0.7` | Removal gain for estimated camera motion. Ignored while `camera_lock` is on. |
+| `smooth` | `0.5` | Temporal smoothing amount. Ignored while `camera_lock` is on. |
+| `keep_fov` | `0.6` | Crop-mode FOV preservation. `1.0` means no zoom; `0.0` allows maximum zoom. |
+| `padding_color` | `#7F7F7F` | HEX fill color for padded areas. Can use the core Color Picker `hex` output. |
 
-  * Input FPS used to scale the smoothing window. Higher values keep the perceptual smoothing consistent for 30/60/120 fps footage.
-* **transform_mode**
+Framing modes:
 
-  * `translation`: X/Y translation only (most robust and lightweight)
-  * `similarity`: translation + rotation + uniform scale (recommended for many cases)
-  * `perspective`: full projective transform (8 DoF). Often fragile; not generally recommended
-* **framing_mode** (FOV handling)
-
-  * `crop`: hide edges by zooming (narrows FOV)
-  * `crop_and_pad`: avoid over-zooming and **pad** what still exceeds the frame
-  * `expand`: never crop; add padding across all frames so the entire trajectory fits (the output canvas usually becomes larger than the input resolution because padding surrounds every frame)
-* **camera_lock** (bool)
-
-  * ON: enforce a tripod-like look
-  * This is a separate solver from normal stabilization, so the two knobs below are disabled while ON
-* **strength** (0.0 to 1.0)
-
-  * **Removal gain** of the estimated camera motion (how much to take out)
-* **smooth** (0.0 to 1.0)
-
-  * Temporal **smoothing strength**. Higher values reduce jitter but yield a more "viscous" camera motion
-* **keep_fov** (0.0 to 1.0, **used only when `framing_mode=crop`**)
-
-  * **1.0 = preserve the input FOV (no zoom)**
-  * **0.0 = allow maximum zoom to hide edges**
-* **padding_color** (HEX)
-
-  * Fill color for outer regions in `crop_and_pad` / `expand` (e.g., `#7F7F7F`). Can be connected from the core Color Picker's `hex` output
-
----
+| Mode | Behavior |
+| --- | --- |
+| `crop` | Hides borders by zooming/cropping, reducing FOV. |
+| `crop_and_pad` | Limits zoom and pads remaining empty regions. |
+| `expand` | Does not crop at all; expands the canvas as needed. |
 
 ## Outputs
 
-* **frames_stabilized**: the stabilized video
-* **padding_mask**: padding regions are emitted as a mask for `crop_and_pad` / `expand`
-* **meta (JSON)**: diagnostics such as estimated/applied transforms, confidences, and zoom/padding ratios
+| Output | Notes |
+| --- | --- |
+| `frames_stabilized` | Stabilized video frames. |
+| `padding_mask` | Mask of padded / missing regions. |
+| `meta` | JSON diagnostics, including estimated motion and applied stabilization matrices. |
 
----
+## Inverse Stabilization
 
-## Using with VACE (outpainting)
+`Video Stabilizer Inverse` is for editing stabilized frames and then adding the removed camera shake back afterward.
 
-* With `framing_mode=crop_and_pad` or `expand`, pass the emitted **padding_mask** to VACE (or similar) to **restore borders without sacrificing FOV** after stabilization
+With `crop` / `crop_and_pad`, gaps will almost always appear at the end because pixels were cropped or padded during stabilization. Use `expand` when you plan to use Inverse.
 
-**Sample Workflow**
+## Example Workflows
 
-* [Wan2.1_VACE_outpainting_VideoStabilizer.json](example_workflows/Wan2.1_VACE_outpainting_VideoStabilizer.json)
-* [Wan2.2-VACE-Fun_outpainting_VideoStabilizer.json](example_workflows/Wan2.2-VACE-Fun_outpainting_VideoStabilizer.json)
-* [Sample_Video (Pexels)](https://www.pexels.com/ja-jp/video/29507473/)
+- [Wan2.1_VACE_outpainting_VideoStabilizer.json](example_workflows/Wan2.1_VACE_outpainting_VideoStabilizer.json)
+- [Wan2.2-VACE-Fun_outpainting_VideoStabilizer.json](example_workflows/Wan2.2-VACE-Fun_outpainting_VideoStabilizer.json)
+- [Sample Video (Pexels)](https://www.pexels.com/ja-jp/video/29507473/)
+
+## License
+
+MIT

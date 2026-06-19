@@ -44,14 +44,20 @@ class FakeSchema:
         self.outputs: list[Any] = []
 
 
-class _PortFamily:
-    @staticmethod
-    def Input(name: str, **kwargs: Any) -> dict[str, Any]:
-        return {"direction": "input", "name": name, **kwargs}
+class _TypedPortFamily:
+    port_type = "UNKNOWN"
 
-    @staticmethod
-    def Output(name: str, **kwargs: Any) -> dict[str, Any]:
-        return {"direction": "output", "name": name, **kwargs}
+    @classmethod
+    def Input(cls, name: str, **kwargs: Any) -> dict[str, Any]:
+        return {"direction": "input", "type": cls.port_type, "name": name, **kwargs}
+
+    @classmethod
+    def Output(cls, name: str, **kwargs: Any) -> dict[str, Any]:
+        return {"direction": "output", "type": cls.port_type, "name": name, **kwargs}
+
+
+def port_family(port_type: str) -> type[_TypedPortFamily]:
+    return type(f"{port_type.title()}PortFamily", (_TypedPortFamily,), {"port_type": port_type})
 
 
 class _CustomType:
@@ -69,13 +75,14 @@ def install_comfy_stubs() -> None:
     latest.io = types.SimpleNamespace(
         ComfyNode=type("ComfyNode", (), {}),
         Custom=lambda name: _CustomType(name),
-        Image=_PortFamily,
-        Mask=_PortFamily,
-        Color=_PortFamily,
-        Float=_PortFamily,
-        Combo=_PortFamily,
-        Boolean=_PortFamily,
-        String=_PortFamily,
+        Image=port_family("IMAGE"),
+        Mask=port_family("MASK"),
+        Color=port_family("COLOR"),
+        Float=port_family("FLOAT"),
+        Combo=port_family("COMBO"),
+        Boolean=port_family("BOOLEAN"),
+        String=port_family("STRING"),
+        Int=port_family("INT"),
         Schema=FakeSchema,
         NodeOutput=lambda *args: args,
         NumberDisplay=types.SimpleNamespace(slider="slider"),
@@ -231,10 +238,38 @@ def schema_signature(schema: FakeSchema) -> dict[str, Any]:
     }
 
 
+def node_schema_signature(module: Any, node_name: str) -> dict[str, Any]:
+    if node_name.endswith("classic"):
+        return schema_signature(module.VideoStabilizerClassic.define_schema())
+    return schema_signature(module.VideoStabilizerFlow.define_schema())
+
+
+def input_by_name(schema: dict[str, Any], name: str) -> dict[str, Any]:
+    for item in schema["inputs"]:
+        if item.get("name") == name:
+            return item
+    raise AssertionError(f"schema input not found: {name}")
+
+
+def normalize_expected_schema_delta(node_name: str, base_schema: dict[str, Any], head_schema: dict[str, Any]) -> None:
+    base_padding = input_by_name(base_schema, "padding_color")
+    head_padding = input_by_name(head_schema, "padding_color")
+    base_type = base_padding.get("type")
+    head_type = head_padding.get("type")
+    if base_type == "STRING" and head_type == "COLOR":
+        head_inputs = head_schema["inputs"]
+        padding_index = next(idx for idx, item in enumerate(head_inputs) if item.get("name") == "padding_color")
+        head_inputs[padding_index] = dict(base_padding)
+        return
+    if base_type != head_type:
+        raise AssertionError(f"schema.{node_name}.padding_color: unexpected type change {base_type!r} -> {head_type!r}")
+
+
 def compare_schema(base: dict[str, Any], head: dict[str, Any]) -> None:
     for node_name in ("video_stabilizer_classic", "video_stabilizer_flow"):
-        base_schema = schema_signature(base[node_name].VideoStabilizerClassic.define_schema()) if node_name.endswith("classic") else schema_signature(base[node_name].VideoStabilizerFlow.define_schema())
-        head_schema = schema_signature(head[node_name].VideoStabilizerClassic.define_schema()) if node_name.endswith("classic") else schema_signature(head[node_name].VideoStabilizerFlow.define_schema())
+        base_schema = node_schema_signature(base[node_name], node_name)
+        head_schema = node_schema_signature(head[node_name], node_name)
+        normalize_expected_schema_delta(node_name, base_schema, head_schema)
         compare_nested(f"schema.{node_name}", base_schema, head_schema)
 
 

@@ -106,6 +106,13 @@ def git_show(ref: str, path: str) -> str:
     return result.stdout
 
 
+def git_show_optional(ref: str, path: str) -> str | None:
+    try:
+        return git_show(ref, path)
+    except subprocess.CalledProcessError:
+        return None
+
+
 def materialize_ref(ref: str, temp_root: Path) -> Path:
     package_root = temp_root / ref.replace("/", "_").replace("-", "_")
     package_root.mkdir(parents=True, exist_ok=True)
@@ -113,9 +120,12 @@ def materialize_ref(ref: str, temp_root: Path) -> Path:
     (package_root / "nodes").mkdir(exist_ok=True)
     (package_root / "nodes" / "__init__.py").write_text("", encoding="utf-8")
     for relative_path in NODE_FILES:
+        content = git_show_optional(ref, relative_path)
+        if content is None:
+            continue
         destination = package_root / relative_path
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(git_show(ref, relative_path), encoding="utf-8")
+        destination.write_text(content, encoding="utf-8")
     return package_root
 
 
@@ -133,6 +143,8 @@ def load_version(ref: str, temp_root: Path) -> dict[str, Any]:
     for short_name in ("stabilizer_utils", "video_stabilizer_classic", "video_stabilizer_flow"):
         module_name = f"{package_name}.nodes.{short_name}"
         path = package_root / "nodes" / f"{short_name}.py"
+        if not path.exists():
+            continue
         spec = importlib.util.spec_from_file_location(module_name, path)
         if spec is None or spec.loader is None:
             raise RuntimeError(f"Unable to load {path}")

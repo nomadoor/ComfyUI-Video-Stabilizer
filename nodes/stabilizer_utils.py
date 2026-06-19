@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Literal, Sequence, Tuple
 
 import cv2
@@ -10,11 +12,25 @@ try:
 except ImportError:  # pragma: no cover - torch optional for some utilities
     torch = None
 
+FramingMode = Literal["crop", "crop_and_pad", "expand"]
 TransformMode = Literal["translation", "similarity", "perspective"]
 
 ParamsToMatrix = Callable[[np.ndarray, TransformMode], np.ndarray]
 
 __all__ = [
+    "FrameAdapter",
+    "FramingMode",
+    "StabilizationResult",
+    "TransformMode",
+    "VideoContext",
+    "_ensure_rgb",
+    "_make_gray",
+    "_matrix_to_params",
+    "_normalize_video_input",
+    "_params_to_matrix",
+    "_prepare_expand_transform",
+    "_reconstruct_video",
+    "_smooth_path",
     "_largest_axis_aligned_rectangle",
     "_compute_crop_with_keep_fov_parametric",
     "_refine_no_padding_crop",
@@ -23,6 +39,278 @@ __all__ = [
     "_min_content_ratio",
     "_convert_masks_for_output",
 ]
+
+
+@dataclass
+class FrameAdapter:
+    """Keeps enough context to project numpy frames back to the original container type."""
+
+    dtype: np.dtype
+    channel_first: bool
+    value_range: Literal["0_1", "0_255"]
+    origin: Literal["numpy", "torch"]
+    squeeze_last_dim: bool
+
+
+@dataclass
+class VideoContext:
+    frames: List[np.ndarray]
+    adapter: FrameAdapter
+    width: int
+    height: int
+    channels: int
+    fps: float | None
+    template_kind: Literal["dict", "sequence"]
+    template_meta: Dict[str, Any]
+
+
+@dataclass
+class StabilizationResult:
+    frames: List[np.ndarray]
+    masks: List[np.ndarray]
+    meta: Dict[str, Any]
+
+
+def _to_numpy_frame(frame: Any) -> Tuple[np.ndarray, FrameAdapter]:
+    """Convert an incoming frame to float32 numpy in RGB order with range 0..1."""
+    origin: Literal["numpy", "torch"] = "numpy"
+    if torch is not None and isinstance(frame, torch.Tensor):
+        origin = "torch"
+        arr = frame.detach().cpu().numpy()
+    else:
+        arr = np.asarray(frame)
+
+    channel_first = False
+    squeeze_last_dim = False
+    if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[0] < arr.shape[-1]:
+        channel_first = True
+        arr = np.moveaxis(arr, 0, -1)
+    elif arr.ndim == 4 and arr.shape[0] == 1:
+        arr = arr[0]
+
+    if arr.ndim == 2:
+        arr = arr[..., np.newaxis]
+        squeeze_last_dim = True
+    elif arr.ndim == 3 and arr.shape[2] == 1:
+        squeeze_last_dim = True
+
+    dtype = arr.dtype
+    arr = arr.astype(np.float32)
+
+    if dtype == np.uint8 or arr.max() > 1.5:
+        value_range: Literal["0_1", "0_255"] = "0_255"
+        arr /= 255.0
+    else:
+        value_range = "0_1"
+
+    adapter = FrameAdapter(
+        dtype=dtype,
+        channel_first=channel_first,
+        value_range=value_range,
+        origin=origin,
+        squeeze_last_dim=squeeze_last_dim,
+    )
+    return arr, adapter
+
+
+def _normalize_video_input(value: Any) -> VideoContext:
+    """Extract list of numpy frames plus metadata required for reconstruction."""
+    if isinstance(value, dict):
+        candidates = ("frames", "images", "video")
+        frames_seq = None
+        for key in candidates:
+            if key in value:
+                frames_seq = value[key]
+                break
+        if frames_seq is None:
+            raise ValueError("Video input dictionary must contain 'frames'.")
+        template_kind: Literal["dict", "sequence"] = "dict"
+        template_meta = {k: v for k, v in value.items() if k not in candidates}
+        fps = template_meta.get("fps")
+    else:
+        frames_seq = value
+        template_kind = "sequence"
+        template_meta = {}
+        fps = None
+
+    frames_np: List[np.ndarray] = []
+    adapter_ref: FrameAdapter | None = None
+    width = height = channels = 0
+
+    for frame in frames_seq:
+        arr, adapter = _to_numpy_frame(frame)
+        if adapter_ref is None:
+            adapter_ref = adapter
+        else:
+            if adapter.channel_first != adapter_ref.channel_first or adapter.origin != adapter_ref.origin:
+                raise ValueError("Mixed tensor layouts within the same video sequence are not supported.")
+        arr = _ensure_rgb(arr)
+        frames_np.append(arr)
+
+    if not frames_np:
+        raise ValueError("The input video sequence is empty.")
+
+    height, width, channels = frames_np[0].shape
+    return VideoContext(
+        frames=frames_np,
+        adapter=adapter_ref,  # type: ignore[arg-type]
+        width=width,
+        height=height,
+        channels=channels,
+        fps=fps,
+        template_kind=template_kind,
+        template_meta=template_meta,
+    )
+
+
+def _reconstruct_video(frames: Iterable[np.ndarray], context: VideoContext) -> Any:
+    """Pack frames into a BHWC torch tensor (or numpy) following Comfy conventions."""
+    frame_list = list(frames)
+    if not frame_list:
+        stacked = np.zeros((1, context.height, context.width, 3), dtype=np.float32)
+    else:
+        stacked = np.stack(frame_list, axis=0).astype(np.float32)
+    stacked = np.ascontiguousarray(stacked)
+    if torch is not None:
+        tensor = torch.from_numpy(stacked)
+    else:
+        tensor = stacked
+
+    if context.template_kind == "dict":
+        payload = dict(context.template_meta)
+        payload["frames"] = tensor
+        return payload
+    return tensor
+
+
+def _ensure_rgb(frame: np.ndarray) -> np.ndarray:
+    """Ensure output frame has three channels in RGB order."""
+    if frame.ndim == 2:
+        frame = frame[..., np.newaxis]
+    channels = frame.shape[2]
+    if channels == 1:
+        frame = np.repeat(frame, 3, axis=2)
+    elif channels > 3:
+        frame = frame[..., :3]
+    return frame
+
+
+def _make_gray(frame: np.ndarray) -> np.ndarray:
+    """Convert frame to uint8 grayscale for tracking."""
+    if frame.shape[2] == 1:
+        gray = frame[..., 0]
+    else:
+        gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+    return np.clip(gray * 255.0, 0, 255).astype(np.uint8)
+
+
+def _matrix_to_params(matrix: np.ndarray, base_mode: TransformMode) -> np.ndarray:
+    """Project a transform matrix into the parameter space used for smoothing."""
+    if base_mode == "translation":
+        return np.array([matrix[0, 2], matrix[1, 2]], dtype=np.float64)
+    if base_mode == "similarity":
+        tx, ty = matrix[0, 2], matrix[1, 2]
+        a, b = matrix[0, 0], matrix[0, 1]
+        c, d = matrix[1, 0], matrix[1, 1]
+        scale = math.sqrt(max(a * a + c * c, 1e-10))
+        theta = math.atan2(c, a)
+        log_scale = math.log(scale)
+        return np.array([tx, ty, theta, log_scale], dtype=np.float64)
+    return np.array(
+        [
+            matrix[0, 0] - 1.0,
+            matrix[0, 1],
+            matrix[0, 2],
+            matrix[1, 0],
+            matrix[1, 1] - 1.0,
+            matrix[1, 2],
+            matrix[2, 0],
+            matrix[2, 1],
+        ],
+        dtype=np.float64,
+    )
+
+
+def _params_to_matrix(params: np.ndarray, base_mode: TransformMode) -> np.ndarray:
+    """Convert parameter offset back to a homogeneous transform matrix."""
+    if base_mode == "translation":
+        return np.array(
+            [
+                [1.0, 0.0, params[0]],
+                [0.0, 1.0, params[1]],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+    if base_mode == "similarity":
+        tx, ty, theta, log_scale = params
+        scale = math.exp(log_scale)
+        cos_t = math.cos(theta)
+        sin_t = math.sin(theta)
+        return np.array(
+            [
+                [scale * cos_t, -scale * sin_t, tx],
+                [scale * sin_t, scale * cos_t, ty],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+    return np.array(
+        [
+            [params[0] + 1.0, params[1], params[2]],
+            [params[3], params[4] + 1.0, params[5]],
+            [params[6], params[7], 1.0],
+        ],
+        dtype=np.float32,
+    )
+
+
+def _smooth_path(path: np.ndarray, smooth: float, fps: float) -> np.ndarray:
+    """Apply symmetric moving-average smoothing to the path."""
+    smooth = float(np.clip(smooth, 0.0, 1.0))
+    if smooth <= 0.0 or len(path) <= 2:
+        return path.copy()
+
+    fps = float(max(1.0, fps))
+    min_seconds = 3.0 / 16.0
+    max_seconds = 13.0 / 16.0
+    window_seconds = min_seconds + smooth * (max_seconds - min_seconds)
+    window = int(round(window_seconds * fps))
+    window = max(3, window)
+    if window % 2 == 0:
+        window += 1
+    pad = window // 2
+    kernel = np.ones(window, dtype=np.float64) / float(window)
+
+    smoothed = np.zeros_like(path)
+    for dim in range(path.shape[1]):
+        series = path[:, dim]
+        padded = np.pad(series, (pad, pad), mode="edge")
+        smoothed[:, dim] = np.convolve(padded, kernel, mode="valid")
+    return smoothed
+
+
+def _prepare_expand_transform(
+    mins: np.ndarray,
+    maxs: np.ndarray,
+) -> Tuple[np.ndarray, Tuple[int, int]]:
+    """Compute translation to keep all frames within the expanded canvas."""
+    x_min = float(np.min(mins[:, 0]))
+    y_min = float(np.min(mins[:, 1]))
+    x_max = float(np.max(maxs[:, 0]))
+    y_max = float(np.max(maxs[:, 1]))
+
+    out_w = int(math.ceil(x_max - x_min))
+    out_h = int(math.ceil(y_max - y_min))
+    translate = np.array(
+        [
+            [1.0, 0.0, -x_min],
+            [0.0, 1.0, -y_min],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
+    return translate, (max(out_w, 1), max(out_h, 1))
 
 
 def _largest_axis_aligned_rectangle(binary_mask: np.ndarray) -> Tuple[int, int, int, int]:

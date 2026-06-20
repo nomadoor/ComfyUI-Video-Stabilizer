@@ -442,6 +442,7 @@ def _compute_crop_with_keep_fov_parametric(
     keep_fov_target: float,
     safety_margin_px: float,
     max_iterations: int = 18,
+    interrupt_check: Callable[[], None] | None = None,
 ) -> Tuple[
     List[np.ndarray],
     List[np.ndarray],
@@ -526,6 +527,8 @@ def _compute_crop_with_keep_fov_parametric(
         best_size: List[float] = list(candidate.get("crop_size", [float(width), float(height)]))  # type: ignore[index]
 
         for matrix in candidate["final"]:
+            if interrupt_check is not None:
+                interrupt_check()
             content = cv2.warpPerspective(
                 ones,
                 matrix,
@@ -661,6 +664,7 @@ def _refine_no_padding_crop(
     width: int,
     height: int,
     safety_shrink_px: int = 1,
+    interrupt_check: Callable[[], None] | None = None,
 ) -> Tuple[List[np.ndarray], List[np.ndarray], List[float], List[float], float]:
     """
     Post-process crop matrices to guarantee padding-free output in crop mode.
@@ -668,6 +672,8 @@ def _refine_no_padding_crop(
     ones = np.ones((height, width), dtype=np.float32)
     masks_bin: List[np.ndarray] = []
     for matrix in final_matrices:
+        if interrupt_check is not None:
+            interrupt_check()
         content = cv2.warpPerspective(
             ones,
             matrix,
@@ -722,6 +728,8 @@ def _refine_no_padding_crop(
     size_best = [crop_w, crop_h]
 
     for matrix in refined_mats:
+        if interrupt_check is not None:
+            interrupt_check()
         content = cv2.warpPerspective(
             ones,
             matrix,

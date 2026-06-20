@@ -45,7 +45,11 @@ def install_comfy_stubs() -> None:
     comfy_utils.ProgressBar = type(
         "ProgressBar",
         (),
-        {"__init__": lambda self, total: None, "update": lambda self, amount: None},
+        {
+            "__init__": lambda self, total: None,
+            "update": lambda self, amount: None,
+            "update_absolute": lambda self, value, total=None, preview=None: None,
+        },
     )
     sys.modules["comfy"] = comfy
     sys.modules["comfy.utils"] = comfy_utils

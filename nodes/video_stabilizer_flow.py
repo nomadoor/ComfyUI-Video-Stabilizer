@@ -253,8 +253,19 @@ def _stabilize_frames(
         }
         return StabilizationResult([], [], meta)
 
-    pbar = ProgressBar(total_frames)
+    def _check_interrupt() -> None:
+        if model_management is not None:
+            model_management.throw_exception_if_processing_interrupted()
+
+    # Progress spans the motion-estimation pass (n-1 transitions) and the final
+    # warp pass (n frames) so the bar advances during the heavy pre-processing
+    # instead of sitting idle until warping begins.
+    estimation_steps = max(0, total_frames - 1)
+    progress_total = estimation_steps + total_frames
+    pbar = ProgressBar(progress_total)
+    progress_done = 0
     progress_stride = 10
+    progress_pending = 0
 
     if len(frames) == 1:
         zero_mask = np.zeros((context.height, context.width, 1), dtype=np.float32)
@@ -276,7 +287,7 @@ def _stabilize_frames(
             "fps_requested": fps_requested,
             "fps_effective": fps_effective,
         }
-        pbar.update(total_frames)
+        pbar.update_absolute(progress_total, progress_total)
         return StabilizationResult([frame_rgb], [zero_mask], meta)
 
     gray_frames = [_make_gray(frame) for frame in frames]
@@ -311,6 +322,12 @@ def _stabilize_frames(
         residuals.append(residual)
         modes_used.append(used_mode)
         delta_params.append(_matrix_to_params(matrix, base_mode))
+        progress_pending += 1
+        if progress_pending >= progress_stride or idx == len(frames) - 1:
+            progress_done += progress_pending
+            pbar.update_absolute(progress_done, progress_total)
+            progress_pending = 0
+        _check_interrupt()
 
     path = np.zeros((len(frames), delta_params[0].shape[0]), dtype=np.float64)
     for idx, delta in enumerate(delta_params, start=1):
@@ -383,7 +400,7 @@ def _stabilize_frames(
                 "padding_fraction_mean": 0.0,
                 "padding_fraction_max": 0.0,
             }
-            pbar.update(total_frames)
+            pbar.update_absolute(progress_total, progress_total)
             frames_rgb = [_ensure_rgb(frame) for frame in frames]
             return StabilizationResult(frames_rgb, [zero_mask] * len(frames_rgb), meta)
 
@@ -406,6 +423,7 @@ def _stabilize_frames(
             context.height,
             keep_fov_clamped,
             safety_margin_px,
+            interrupt_check=_check_interrupt,
         )
         (
             final_matrices,
@@ -413,7 +431,13 @@ def _stabilize_frames(
             crop_origin,
             crop_size,
             keep_fov_effective_value,
-        ) = _refine_no_padding_crop(final_matrices, context.width, context.height, safety_shrink_px=1)
+        ) = _refine_no_padding_crop(
+            final_matrices,
+            context.width,
+            context.height,
+            safety_shrink_px=1,
+            interrupt_check=_check_interrupt,
+        )
         output_size = (context.width, context.height)
     else:
         apply_matrices = [_params_to_matrix(diff, base_mode) for diff in delta_params_full]
@@ -497,7 +521,6 @@ def _stabilize_frames(
     frame_border_value: Any = float(np.mean(padding_array)) if context.channels == 1 else padding_array.tolist()
 
     frame_count = len(final_matrices)
-    progress_pending = 0
 
     for idx, (frame, matrix) in enumerate(zip(frames, final_matrices)):
         warped = cv2.warpPerspective(
@@ -529,10 +552,10 @@ def _stabilize_frames(
         padding_masks.append(mask)
         progress_pending += 1
         if progress_pending >= progress_stride or idx == frame_count - 1:
-            pbar.update(progress_pending)
+            progress_done += progress_pending
+            pbar.update_absolute(progress_done, progress_total)
             progress_pending = 0
-        if model_management is not None:
-            model_management.throw_exception_if_processing_interrupted()
+        _check_interrupt()
 
     framing_meta["padding_detected"] = padding_detected
 

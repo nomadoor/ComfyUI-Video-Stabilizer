@@ -35,6 +35,7 @@ __all__ = [
     "_reconstruct_video",
     "_smooth_path",
     "_largest_axis_aligned_rectangle",
+    "_largest_aspect_ratio_rectangle",
     "_compute_crop_with_keep_fov_parametric",
     "_refine_no_padding_crop",
     "_parse_padding_color",
@@ -362,6 +363,65 @@ def _largest_axis_aligned_rectangle(binary_mask: np.ndarray) -> Tuple[int, int, 
     return best_rect
 
 
+def _largest_aspect_ratio_rectangle(
+    binary_mask: np.ndarray,
+    target_width: int,
+    target_height: int,
+) -> Tuple[float, float, float, float] | None:
+    """Find the largest all-valid crop that keeps the target aspect ratio.
+
+    The crop dimensions remain floats so the caller can derive a single scale
+    factor exactly. Validity is checked conservatively against the enclosing
+    integer pixel rectangle.
+    """
+    if target_width <= 0 or target_height <= 0:
+        return None
+
+    height, width = binary_mask.shape
+    aspect_ratio = float(target_width) / float(target_height)
+    mask = (binary_mask > 0).astype(np.uint8)
+    integral = cv2.integral(mask, sdepth=cv2.CV_64F)
+
+    def find_fit(crop_height: int) -> Tuple[int, int] | None:
+        crop_width = int(math.ceil(aspect_ratio * crop_height))
+        if crop_height <= 0 or crop_height > height or crop_width > width:
+            return None
+        sums = (
+            integral[crop_height:, crop_width:]
+            - integral[:-crop_height, crop_width:]
+            - integral[crop_height:, :-crop_width]
+            + integral[:-crop_height, :-crop_width]
+        )
+        matches = sums == crop_width * crop_height
+        if not np.any(matches):
+            return None
+
+        # Prefer the centered crop when it is valid so refinement does not
+        # introduce a needless framing shift.
+        y0 = int(np.clip(round((height - crop_height) * 0.5), 0, matches.shape[0] - 1))
+        x0 = int(np.clip(round((width - crop_width) * 0.5), 0, matches.shape[1] - 1))
+        if not matches[y0, x0]:
+            y0, x0 = np.unravel_index(int(np.argmax(matches)), matches.shape)
+        return int(x0), int(y0)
+
+    low, high = 1, min(height, int(math.floor(width / aspect_ratio)))
+    best: Tuple[int, int, int] | None = None
+    while low <= high:
+        crop_height = (low + high) // 2
+        location = find_fit(crop_height)
+        if location is None:
+            high = crop_height - 1
+        else:
+            best = (location[0], location[1], crop_height)
+            low = crop_height + 1
+
+    if best is None:
+        return None
+
+    x0, y0, crop_height = best
+    return float(x0), float(y0), aspect_ratio * crop_height, float(crop_height)
+
+
 def _scale_deltas_parametric(
     params_to_matrix: ParamsToMatrix,
     base_mode: TransformMode,
@@ -412,35 +472,49 @@ def _compute_crop_with_keep_fov_parametric(
         x1 = float(np.min(maxs[:, 0]))
         y1 = float(np.min(maxs[:, 1]))
 
-        inter_w = max(0.0, x1 - x0)
-        inter_h = max(0.0, y1 - y0)
-        ratio_est = 0.0 if inter_w <= 0.0 or inter_h <= 0.0 else min(inter_w / width, inter_h / height)
+        safe_w = max(0.0, x1 - x0)
+        safe_h = max(0.0, y1 - y0)
+        margin = min(safety_margin_px, safe_w * 0.25, safe_h * 0.25)
+        safe_x0 = x0 + margin
+        safe_y0 = y0 + margin
+        safe_w = max(0.0, safe_w - 2.0 * margin)
+        safe_h = max(0.0, safe_h - 2.0 * margin)
 
-        margin = min(safety_margin_px, inter_w * 0.25, inter_h * 0.25)
-        crop_w = max(1.0, min(width, inter_w - 2.0 * margin))
-        crop_h = max(1.0, min(height, inter_h - 2.0 * margin))
-        crop_x0 = x0 + max(0.0, (inter_w - crop_w) * 0.5)
-        crop_y0 = y0 + max(0.0, (inter_h - crop_h) * 0.5)
-        crop_x0 = float(np.clip(crop_x0, 0.0, max(width - crop_w, 0.0)))
-        crop_y0 = float(np.clip(crop_y0, 0.0, max(height - crop_h, 0.0)))
+        if safe_w <= 0.0 or safe_h <= 0.0:
+            return 0.0, {
+                "scale": scale,
+                "pre_crop": mats,
+                "final": mats,
+                "crop_origin": [0.0, 0.0],
+                "crop_size": [float(width), float(height)],
+                "has_overlap": False,
+            }
 
-        scale_x = width / max(1.0, crop_w)
-        scale_y = height / max(1.0, crop_h)
+        crop_ratio = min(1.0, safe_w / width, safe_h / height)
+        crop_w = width * crop_ratio
+        crop_h = height * crop_ratio
+        crop_x0 = safe_x0 + (safe_w - crop_w) * 0.5
+        crop_y0 = safe_y0 + (safe_h - crop_h) * 0.5
+
+        # A single scale preserves the source aspect ratio while still filling
+        # the fixed-size crop output without padding.
+        crop_scale = width / crop_w
         crop_matrix = np.array(
             [
-                [scale_x, 0.0, -scale_x * crop_x0],
-                [0.0, scale_y, -scale_y * crop_y0],
+                [crop_scale, 0.0, -crop_scale * crop_x0],
+                [0.0, crop_scale, -crop_scale * crop_y0],
                 [0.0, 0.0, 1.0],
             ],
             dtype=np.float32,
         )
         final_mats = [crop_matrix @ mat for mat in mats]
-        return ratio_est, {
+        return crop_ratio, {
             "scale": scale,
             "pre_crop": mats,
             "final": final_mats,
             "crop_origin": [crop_x0, crop_y0],
             "crop_size": [crop_w, crop_h],
+            "has_overlap": True,
         }
 
     def finalize_with_masks(candidate: Dict[str, object]) -> Dict[str, object]:
@@ -491,8 +565,16 @@ def _compute_crop_with_keep_fov_parametric(
         )
         return candidate
 
+    ratio_full, raw_full = evaluate_bbox_only(1.0)
     if keep_fov_clamped <= eps:
-        _, raw = evaluate_bbox_only(1.0)
+        if bool(raw_full["has_overlap"]):
+            raw = raw_full
+            stabilization_scale = 1.0
+            note = None
+        else:
+            _, raw = evaluate_bbox_only(0.0)
+            stabilization_scale = 0.0
+            note = "No common crop region at full stabilization; stabilization was disabled."
         candidate = finalize_with_masks(raw)
         return (
             candidate["final"],
@@ -500,13 +582,12 @@ def _compute_crop_with_keep_fov_parametric(
             candidate["content_masks"],
             candidate["ratio_final"],
             "disabled",
-            None,
-            1.0,
+            note,
+            stabilization_scale,
             candidate["crop_origin"],
             candidate["crop_size"],
         )
 
-    ratio_full, raw_full = evaluate_bbox_only(1.0)
     if ratio_full >= target_ratio - eps:
         candidate = finalize_with_masks(raw_full)
         return (
@@ -614,30 +695,22 @@ def _refine_no_padding_crop(
             0.0,
         )
 
-    x0, y0, w, h = _largest_axis_aligned_rectangle(common)
-    crop_w = max(1, w)
-    crop_h = max(1, h)
+    aspect_crop = _largest_aspect_ratio_rectangle(common, width, height)
+    if aspect_crop is None:
+        return (
+            list(final_matrices),
+            [mask[..., None].astype(np.float32) for mask in masks_bin],
+            [0.0, 0.0],
+            [float(width), float(height)],
+            0.0,
+        )
 
-    coverage_ratio = 1.0
-    for mask in masks_bin:
-        roi = mask[y0 : y0 + crop_h, x0 : x0 + crop_w]
-        coords = np.argwhere(roi > 0.5)
-        if coords.size == 0:
-            coverage_ratio = 0.0
-            break
-        y_min, x_min = coords.min(axis=0)
-        y_max, x_max = coords.max(axis=0)
-        covered_w = max(1, x_max - x_min + 1)
-        covered_h = max(1, y_max - y_min + 1)
-        ratio_pre = min(covered_w / float(crop_w), covered_h / float(crop_h))
-        coverage_ratio = min(coverage_ratio, ratio_pre)
-
-    scale_x = width / float(crop_w)
-    scale_y = height / float(crop_h)
+    x0, y0, crop_w, crop_h = aspect_crop
+    crop_scale = width / crop_w
     crop_matrix = np.array(
         [
-            [scale_x, 0.0, -scale_x * float(x0)],
-            [0.0, scale_y, -scale_y * float(y0)],
+            [crop_scale, 0.0, -crop_scale * x0],
+            [0.0, crop_scale, -crop_scale * y0],
             [0.0, 0.0, 1.0],
         ],
         dtype=np.float32,
@@ -645,8 +718,8 @@ def _refine_no_padding_crop(
 
     refined_mats = [crop_matrix @ matrix for matrix in final_matrices]
     refined_masks: List[np.ndarray] = []
-    origin_best = [float(x0), float(y0)]
-    size_best = [float(crop_w), float(crop_h)]
+    origin_best = [x0, y0]
+    size_best = [crop_w, crop_h]
 
     for matrix in refined_mats:
         content = cv2.warpPerspective(
@@ -662,7 +735,7 @@ def _refine_no_padding_crop(
         # Keeping origin_best/size_best from pre-scale solve; refined masks
         # are only used for padding detection downstream.
 
-    return refined_mats, refined_masks, origin_best, size_best, float(coverage_ratio)
+    return refined_mats, refined_masks, origin_best, size_best, 1.0
 
 
 DEFAULT_PADDING_RGB = (127, 127, 127)

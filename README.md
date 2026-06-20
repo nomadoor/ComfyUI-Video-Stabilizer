@@ -50,7 +50,7 @@ Framing modes:
 
 | Mode | Behavior |
 | --- | --- |
-| `crop` | Hides borders by zooming/cropping, reducing FOV. |
+| `crop` | Hides borders with an aspect-ratio-preserving zoom/crop, reducing FOV. |
 | `crop_and_pad` | Limits zoom and pads remaining empty regions. |
 | `expand` | Does not crop at all; expands the canvas as needed. |
 

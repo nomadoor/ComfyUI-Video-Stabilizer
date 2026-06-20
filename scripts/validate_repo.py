@@ -17,6 +17,7 @@ PYTHON_FILES = [
     "nodes/video_stabilizer_flow.py",
     "nodes/video_stabilizer_inverse.py",
     "scripts/compare_refactor_behavior.py",
+    "scripts/check_crop_aspect_ratio.py",
     "scripts/check_inverse_stabilization.py",
     "scripts/check_node_schema.py",
     "scripts/check_workflows.py",
@@ -45,6 +46,7 @@ def main() -> int:
         ("python syntax", check_py_compile),
         ("node schema", lambda: run_script("scripts/check_node_schema.py")),
         ("workflow json", lambda: run_script("scripts/check_workflows.py")),
+        ("crop aspect ratio", lambda: run_script("scripts/check_crop_aspect_ratio.py")),
         ("inverse stabilization", lambda: run_script("scripts/check_inverse_stabilization.py")),
     ]
 

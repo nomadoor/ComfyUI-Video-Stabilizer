@@ -441,6 +441,10 @@ def _stabilize_frames(
             safety_shrink_px=1,
             interrupt_check=_check_interrupt,
         )
+        # Release the full-resolution refine masks before the warp pass; the loop
+        # recomputes per-frame content (bit-identical) so this list does not stay
+        # resident alongside the output buffers, which is where peak memory sits.
+        final_content_masks = None
         output_size = (context.width, context.height)
     else:
         apply_matrices = [_params_to_matrix(diff, base_mode) for diff in delta_params_full]

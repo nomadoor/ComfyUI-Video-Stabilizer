@@ -28,6 +28,9 @@ __all__ = [
     "_build_stabilization_warp_meta",
     "_ensure_rgb",
     "_make_gray",
+    "_make_gray_for_estimation",
+    "_working_estimation_size",
+    "_rescale_transform_to_full",
     "_matrix_to_params",
     "_normalize_video_input",
     "_params_to_matrix",
@@ -229,6 +232,61 @@ def _make_gray(frame: np.ndarray) -> np.ndarray:
     else:
         gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
     return np.clip(gray * 255.0, 0, 255).astype(np.uint8)
+
+
+DEFAULT_ESTIMATION_MAX_SIDE = 960
+
+
+def _working_estimation_size(
+    width: int,
+    height: int,
+    max_side: int = DEFAULT_ESTIMATION_MAX_SIDE,
+) -> Tuple[int, int] | None:
+    """Pick a reduced size for motion estimation, or None to use full resolution.
+
+    Camera-motion estimation does not need full detail; capping the longest side
+    keeps the tracking pass fast and light on large footage while leaving the
+    full-resolution warp untouched. Returns None when the frame is already small
+    enough so smaller inputs are processed unchanged.
+    """
+    longest = max(int(width), int(height))
+    if longest <= max_side:
+        return None
+    scale = max_side / float(longest)
+    small_w = max(1, int(round(width * scale)))
+    small_h = max(1, int(round(height * scale)))
+    if small_w >= width or small_h >= height:
+        return None
+    return small_w, small_h
+
+
+def _make_gray_for_estimation(frame: np.ndarray, working_size: Tuple[int, int] | None) -> np.ndarray:
+    """Grayscale a frame for tracking, optionally downscaled to ``working_size``."""
+    gray = _make_gray(frame)
+    if working_size is None:
+        return gray
+    return cv2.resize(gray, working_size, interpolation=cv2.INTER_AREA)
+
+
+def _rescale_transform_to_full(
+    matrix: np.ndarray,
+    source_size: Tuple[int, int],
+    working_size: Tuple[int, int],
+) -> np.ndarray:
+    """Map a transform estimated at ``working_size`` back to full-resolution coords.
+
+    A coordinate in the full frame maps to the working frame via S = diag(sx, sy);
+    the full-resolution transform is therefore S^-1 @ M_working @ S, which scales
+    translation while leaving rotation/scale invariant.
+    """
+    src_w, src_h = source_size
+    small_w, small_h = working_size
+    sx = small_w / float(src_w)
+    sy = small_h / float(src_h)
+    scale = np.array([[sx, 0.0, 0.0], [0.0, sy, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
+    inv_scale = np.array([[1.0 / sx, 0.0, 0.0], [0.0, 1.0 / sy, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
+    full = inv_scale @ matrix.astype(np.float64) @ scale
+    return full.astype(np.float32)
 
 
 def _matrix_to_params(matrix: np.ndarray, base_mode: TransformMode) -> np.ndarray:

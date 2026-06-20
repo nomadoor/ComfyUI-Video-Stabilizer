@@ -28,8 +28,10 @@ from .stabilizer_utils import (
     _compute_crop_with_keep_fov_parametric,
     _convert_masks_for_output,
     _ensure_rgb,
-    _make_gray,
+    _make_gray_for_estimation,
     _matrix_to_params,
+    _rescale_transform_to_full,
+    _working_estimation_size,
     _min_content_ratio,
     _normalize_video_input,
     _params_to_matrix,
@@ -233,7 +235,8 @@ def _stabilize_frames(
         pbar.update_absolute(progress_total, progress_total)
         return StabilizationResult([frame_rgb], [zero_mask], meta)
 
-    gray_frames = [_make_gray(frame) for frame in frames]
+    working_size = _working_estimation_size(context.width, context.height)
+    gray_frames = [_make_gray_for_estimation(frame, working_size) for frame in frames]
     base_mode = transform_mode
 
     delta_params: List[np.ndarray] = []
@@ -250,6 +253,8 @@ def _stabilize_frames(
         )
         if used_mode != active_mode:
             active_mode = used_mode
+        if working_size is not None:
+            matrix = _rescale_transform_to_full(matrix, (context.width, context.height), working_size)
         matrices.append(matrix)
         confidences.append(confidence)
         modes_used.append(used_mode)

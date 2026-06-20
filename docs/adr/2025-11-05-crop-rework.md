@@ -14,6 +14,7 @@ Implemented
 - If the required crop would violate `keep_fov`, scale down stabilization deltas (strength/smooth effect) until the requested FOV can be respected, or report the effective FOV when impossible.
 - Compute a single crop transform from that final box, apply a small configurable safety margin that never pushes the crop below the requested FOV, and reuse it for every frame for both classic and flow stabilizers.
 - Refine the crop via an AND-mask ➔ optional erosion ➔ largest-rectangle-of-ones stage so that crop mode cannot leak padding even with numerical noise.
+- Constrain both the initial crop and the refinement crop to the input aspect ratio, then scale with one uniform factor. This can reduce the retained FOV slightly versus an unconstrained rectangle, but prevents geometric distortion while preserving the no-padding guarantee.
 - Generate padding masks directly from the final warp and expose new metadata (`keep_fov_status`, `keep_fov_effective`, stabilization scale, effective padding ratios, etc.).
 
 ## Consequences

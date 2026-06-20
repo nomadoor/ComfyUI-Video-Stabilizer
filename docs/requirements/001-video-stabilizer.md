@@ -16,7 +16,7 @@ Last updated: 2025‑11‑03 (UTC+9)
 
 * **framing_mode**: `crop | crop_and_pad | expand`
 
-  * `crop`: Hide edges via auto‑zoom
+  * `crop`: Hide edges via auto‑zoom while preserving the input aspect ratio
   * `crop_and_pad`: Zoom within a limit first, then use padding for the remainder (always emit mask)
   * `expand`: No zoom; expand canvas to enclose the full stabilized trajectory (mask is expected)
 * **transform_mode**: `translation | similarity | perspective`
@@ -85,7 +85,7 @@ Last updated: 2025‑11‑03 (UTC+9)
    * Allow internal auto‑fallback of `transform_mode` (perspective→similarity→translation) when unstable
 4. **Framing**
 
-   * `crop`: hide edges via zoom governed by `keep_fov`
+   * `crop`: hide edges via zoom governed by `keep_fov`, preserving the input aspect ratio with no padding
    * `crop_and_pad`: keep FOV (only recenter) and pad the remainder (mark pad=1 in mask; exclude pad from tracking)
    * `expand`: zero zoom; enlarge canvas to the minimal enclosing rectangle (or keep input size + extend outward—implementation choice)
 5. **Numerical robustness**

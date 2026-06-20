@@ -447,6 +447,7 @@ def _compute_crop_with_keep_fov_parametric(
     safety_margin_px: float,
     max_iterations: int = 18,
     interrupt_check: Callable[[], None] | None = None,
+    return_masks: bool = True,
 ) -> Tuple[
     List[np.ndarray],
     List[np.ndarray],
@@ -544,7 +545,11 @@ def _compute_crop_with_keep_fov_parametric(
             content = (content > 0.5).astype(np.float32)
             content = cv2.dilate(content, kernel, iterations=1)
             content = cv2.erode(content, kernel, iterations=1)
-            masks.append(content[..., None])
+            # The caller in the node path discards these masks (the refine pass
+            # rebuilds them), so skip retaining the full-resolution list there and
+            # only keep the min content ratio that drives keep_fov status.
+            if return_masks:
+                masks.append(content[..., None])
 
             coords = np.argwhere(content > 0.5)
             if coords.size == 0:
@@ -674,10 +679,8 @@ def _refine_no_padding_crop(
     Post-process crop matrices to guarantee padding-free output in crop mode.
     """
     ones = np.ones((height, width), dtype=np.float32)
-    masks_bin: List[np.ndarray] = []
-    for matrix in final_matrices:
-        if interrupt_check is not None:
-            interrupt_check()
+
+    def _warp_binary(matrix: np.ndarray) -> np.ndarray:
         content = cv2.warpPerspective(
             ones,
             matrix,
@@ -686,11 +689,17 @@ def _refine_no_padding_crop(
             borderMode=cv2.BORDER_CONSTANT,
             borderValue=0.0,
         )
-        masks_bin.append((content > 0.5).astype(np.uint8))
+        return (content > 0.5).astype(np.uint8)
 
-    common = masks_bin[0].copy()
-    for mask in masks_bin[1:]:
-        common &= mask
+    # AND the per-frame content masks into ``common`` incrementally instead of
+    # retaining the whole full-resolution mask list; the list is only needed in
+    # the rare degenerate fallbacks below, where it is cheap to recompute.
+    common: np.ndarray | None = None
+    for matrix in final_matrices:
+        if interrupt_check is not None:
+            interrupt_check()
+        mask = _warp_binary(matrix)
+        common = mask.copy() if common is None else (common & mask)
 
     if safety_shrink_px > 0:
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1 + 2 * safety_shrink_px, 1 + 2 * safety_shrink_px))
@@ -699,7 +708,7 @@ def _refine_no_padding_crop(
     if common.max() == 0:
         return (
             list(final_matrices),
-            [mask[..., None].astype(np.float32) for mask in masks_bin],
+            [_warp_binary(matrix)[..., None].astype(np.float32) for matrix in final_matrices],
             [0.0, 0.0],
             [float(width), float(height)],
             0.0,
@@ -709,7 +718,7 @@ def _refine_no_padding_crop(
     if aspect_crop is None:
         return (
             list(final_matrices),
-            [mask[..., None].astype(np.float32) for mask in masks_bin],
+            [_warp_binary(matrix)[..., None].astype(np.float32) for matrix in final_matrices],
             [0.0, 0.0],
             [float(width), float(height)],
             0.0,

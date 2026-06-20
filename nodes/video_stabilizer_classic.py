@@ -356,6 +356,7 @@ def _stabilize_frames(
             keep_fov_clamped,
             safety_margin_px,
             interrupt_check=_check_interrupt,
+            return_masks=False,
         )
         (
             final_matrices,

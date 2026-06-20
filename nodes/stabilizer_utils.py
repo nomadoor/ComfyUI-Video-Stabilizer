@@ -480,9 +480,19 @@ def _compute_crop_with_keep_fov_parametric(
         safe_w = max(0.0, safe_w - 2.0 * margin)
         safe_h = max(0.0, safe_h - 2.0 * margin)
 
+        if safe_w <= 0.0 or safe_h <= 0.0:
+            return 0.0, {
+                "scale": scale,
+                "pre_crop": mats,
+                "final": mats,
+                "crop_origin": [0.0, 0.0],
+                "crop_size": [float(width), float(height)],
+                "has_overlap": False,
+            }
+
         crop_ratio = min(1.0, safe_w / width, safe_h / height)
-        crop_w = max(1e-6, width * crop_ratio)
-        crop_h = max(1e-6, height * crop_ratio)
+        crop_w = width * crop_ratio
+        crop_h = height * crop_ratio
         crop_x0 = safe_x0 + (safe_w - crop_w) * 0.5
         crop_y0 = safe_y0 + (safe_h - crop_h) * 0.5
 
@@ -504,6 +514,7 @@ def _compute_crop_with_keep_fov_parametric(
             "final": final_mats,
             "crop_origin": [crop_x0, crop_y0],
             "crop_size": [crop_w, crop_h],
+            "has_overlap": True,
         }
 
     def finalize_with_masks(candidate: Dict[str, object]) -> Dict[str, object]:
@@ -554,8 +565,16 @@ def _compute_crop_with_keep_fov_parametric(
         )
         return candidate
 
+    ratio_full, raw_full = evaluate_bbox_only(1.0)
     if keep_fov_clamped <= eps:
-        _, raw = evaluate_bbox_only(1.0)
+        if bool(raw_full["has_overlap"]):
+            raw = raw_full
+            stabilization_scale = 1.0
+            note = None
+        else:
+            _, raw = evaluate_bbox_only(0.0)
+            stabilization_scale = 0.0
+            note = "No common crop region at full stabilization; stabilization was disabled."
         candidate = finalize_with_masks(raw)
         return (
             candidate["final"],
@@ -563,13 +582,12 @@ def _compute_crop_with_keep_fov_parametric(
             candidate["content_masks"],
             candidate["ratio_final"],
             "disabled",
-            None,
-            1.0,
+            note,
+            stabilization_scale,
             candidate["crop_origin"],
             candidate["crop_size"],
         )
 
-    ratio_full, raw_full = evaluate_bbox_only(1.0)
     if ratio_full >= target_ratio - eps:
         candidate = finalize_with_masks(raw_full)
         return (

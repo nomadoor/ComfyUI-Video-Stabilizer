@@ -165,6 +165,28 @@ def main() -> int:
         if float(np.min(expected_mask)) <= 0.5 or float(np.min(content_mask)) <= 0.5:
             raise AssertionError(f"frame {index}: crop framing introduced padding")
 
+    no_overlap_deltas = [
+        np.array([0.0, 0.0], dtype=np.float64),
+        np.array([width * 2.0, 0.0], dtype=np.float64),
+    ]
+    no_overlap = _compute_crop_with_keep_fov_parametric(
+        _params_to_matrix,
+        "translation",
+        no_overlap_deltas,
+        width,
+        height,
+        keep_fov_target=0.0,
+        safety_margin_px=2.0,
+    )
+    no_overlap_matrices, _, no_overlap_masks, _, _, no_overlap_note, no_overlap_scale, _, _ = no_overlap
+    assert_close("no-overlap stabilization scale", no_overlap_scale, 0.0)
+    if no_overlap_note is None:
+        raise AssertionError("no-overlap crop fallback must report why stabilization was disabled")
+    for index, (matrix, mask) in enumerate(zip(no_overlap_matrices, no_overlap_masks, strict=True)):
+        assert_close(f"no-overlap matrix {index} x scale", float(matrix[0, 0]), float(matrix[1, 1]))
+        if float(np.min(mask)) <= 0.5:
+            raise AssertionError(f"no-overlap frame {index}: fallback introduced missing content")
+
     install_comfy_stubs()
     frames = make_synthetic_frames(width, height)
     for module_name in ("nodes.video_stabilizer_classic", "nodes.video_stabilizer_flow"):

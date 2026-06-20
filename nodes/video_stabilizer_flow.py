@@ -33,9 +33,11 @@ from .stabilizer_utils import (
     _compute_crop_with_keep_fov_parametric,
     _convert_masks_for_output,
     _ensure_rgb,
-    _make_gray,
+    _make_gray_for_estimation,
     _matrix_to_params,
     _min_content_ratio,
+    _rescale_transform_to_full,
+    _working_estimation_size,
     _normalize_video_input,
     _params_to_matrix,
     _parse_padding_color,
@@ -253,8 +255,19 @@ def _stabilize_frames(
         }
         return StabilizationResult([], [], meta)
 
-    pbar = ProgressBar(total_frames)
+    def _check_interrupt() -> None:
+        if model_management is not None:
+            model_management.throw_exception_if_processing_interrupted()
+
+    # Progress spans the motion-estimation pass (n-1 transitions) and the final
+    # warp pass (n frames) so the bar advances during the heavy pre-processing
+    # instead of sitting idle until warping begins.
+    estimation_steps = max(0, total_frames - 1)
+    progress_total = estimation_steps + total_frames
+    pbar = ProgressBar(progress_total)
+    progress_done = 0
     progress_stride = 10
+    progress_pending = 0
 
     if len(frames) == 1:
         zero_mask = np.zeros((context.height, context.width, 1), dtype=np.float32)
@@ -276,10 +289,11 @@ def _stabilize_frames(
             "fps_requested": fps_requested,
             "fps_effective": fps_effective,
         }
-        pbar.update(total_frames)
+        pbar.update_absolute(progress_total, progress_total)
         return StabilizationResult([frame_rgb], [zero_mask], meta)
 
-    gray_frames = [_make_gray(frame) for frame in frames]
+    working_size = _working_estimation_size(context.width, context.height)
+    gray_frames = [_make_gray_for_estimation(frame, working_size) for frame in frames]
     base_mode = transform_mode
 
     flow_backend, backend_obj, flow_fallback_reason = _select_flow_backend()
@@ -306,11 +320,21 @@ def _stabilize_frames(
             )
         if used_mode != active_mode:
             active_mode = used_mode
+        if working_size is not None:
+            matrix = _rescale_transform_to_full(matrix, (context.width, context.height), working_size)
         matrices.append(matrix)
         confidences.append(confidence)
         residuals.append(residual)
         modes_used.append(used_mode)
         delta_params.append(_matrix_to_params(matrix, base_mode))
+        progress_pending += 1
+        if progress_pending >= progress_stride or idx == len(frames) - 1:
+            progress_done += progress_pending
+            pbar.update_absolute(progress_done, progress_total)
+            progress_pending = 0
+        _check_interrupt()
+
+    del gray_frames  # grayscale copies are only needed during estimation
 
     path = np.zeros((len(frames), delta_params[0].shape[0]), dtype=np.float64)
     for idx, delta in enumerate(delta_params, start=1):
@@ -383,7 +407,7 @@ def _stabilize_frames(
                 "padding_fraction_mean": 0.0,
                 "padding_fraction_max": 0.0,
             }
-            pbar.update(total_frames)
+            pbar.update_absolute(progress_total, progress_total)
             frames_rgb = [_ensure_rgb(frame) for frame in frames]
             return StabilizationResult(frames_rgb, [zero_mask] * len(frames_rgb), meta)
 
@@ -406,6 +430,8 @@ def _stabilize_frames(
             context.height,
             keep_fov_clamped,
             safety_margin_px,
+            interrupt_check=_check_interrupt,
+            return_masks=False,
         )
         (
             final_matrices,
@@ -413,7 +439,17 @@ def _stabilize_frames(
             crop_origin,
             crop_size,
             keep_fov_effective_value,
-        ) = _refine_no_padding_crop(final_matrices, context.width, context.height, safety_shrink_px=1)
+        ) = _refine_no_padding_crop(
+            final_matrices,
+            context.width,
+            context.height,
+            safety_shrink_px=1,
+            interrupt_check=_check_interrupt,
+        )
+        # Release the full-resolution refine masks before the warp pass; the loop
+        # recomputes per-frame content (bit-identical) so this list does not stay
+        # resident alongside the output buffers, which is where peak memory sits.
+        final_content_masks = None
         output_size = (context.width, context.height)
     else:
         apply_matrices = [_params_to_matrix(diff, base_mode) for diff in delta_params_full]
@@ -488,8 +524,6 @@ def _stabilize_frames(
     strength_effective = strength * stabilization_scale
     effective_target_path = path + effective_diffs
 
-    stabilized_frames: List[np.ndarray] = []
-    padding_masks: List[np.ndarray] = []
     padded_ratios: List[float] = []
     padding_detected = False
 
@@ -497,18 +531,26 @@ def _stabilize_frames(
     frame_border_value: Any = float(np.mean(padding_array)) if context.channels == 1 else padding_array.tolist()
 
     frame_count = len(final_matrices)
-    progress_pending = 0
 
-    for idx, (frame, matrix) in enumerate(zip(frames, final_matrices)):
+    # Write directly into preallocated arrays instead of building Python lists and
+    # stacking them later; on large sequences the intermediate list plus the stack
+    # copy roughly doubled peak memory. Input frames are released as they are
+    # consumed so resident memory does not hold the whole source sequence at once.
+    out_w, out_h = output_size
+    stabilized_frames = np.empty((frame_count, out_h, out_w, 3), dtype=np.float32)
+    padding_masks = np.empty((frame_count, out_h, out_w, 1), dtype=np.float32)
+
+    for idx, matrix in enumerate(final_matrices):
         warped = cv2.warpPerspective(
-            frame,
+            frames[idx],
             matrix,
             output_size,
             flags=cv2.INTER_LINEAR,
             borderMode=cv2.BORDER_CONSTANT,
             borderValue=frame_border_value,
         )
-        stabilized_frames.append(_ensure_rgb(warped.astype(np.float32)))
+        stabilized_frames[idx] = _ensure_rgb(warped.astype(np.float32))
+        frames[idx] = None  # release the source frame; it is no longer needed
 
         if framing_mode == "crop" and final_content_masks is not None and idx < len(final_content_masks):
             content = final_content_masks[idx][..., 0]
@@ -521,18 +563,18 @@ def _stabilize_frames(
                 borderMode=cv2.BORDER_CONSTANT,
                 borderValue=0.0,
             )
-        mask = (1.0 - (content > 0.5).astype(np.float32))[..., np.newaxis]
+        mask = 1.0 - (content > 0.5).astype(np.float32)
         mask[mask < 1e-3] = 0.0
         if not padding_detected and float(np.max(mask)) > 1e-3:
             padding_detected = True
         padded_ratios.append(float(mask.mean()))
-        padding_masks.append(mask)
+        padding_masks[idx, ..., 0] = mask
         progress_pending += 1
         if progress_pending >= progress_stride or idx == frame_count - 1:
-            pbar.update(progress_pending)
+            progress_done += progress_pending
+            pbar.update_absolute(progress_done, progress_total)
             progress_pending = 0
-        if model_management is not None:
-            model_management.throw_exception_if_processing_interrupted()
+        _check_interrupt()
 
     framing_meta["padding_detected"] = padding_detected
 

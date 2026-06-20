@@ -28,6 +28,9 @@ __all__ = [
     "_build_stabilization_warp_meta",
     "_ensure_rgb",
     "_make_gray",
+    "_make_gray_for_estimation",
+    "_working_estimation_size",
+    "_rescale_transform_to_full",
     "_matrix_to_params",
     "_normalize_video_input",
     "_params_to_matrix",
@@ -106,13 +109,25 @@ def _to_numpy_frame(frame: Any) -> Tuple[np.ndarray, FrameAdapter]:
         squeeze_last_dim = True
 
     dtype = arr.dtype
-    arr = arr.astype(np.float32)
+    value_range: Literal["0_1", "0_255"]
 
-    if dtype == np.uint8 or arr.max() > 1.5:
-        value_range: Literal["0_1", "0_255"] = "0_255"
+    if dtype == np.uint8:
+        # uint8 always needs a fresh float32 buffer; scaling it in place is safe.
+        arr = arr.astype(np.float32)
         arr /= 255.0
+        value_range = "0_255"
+    elif bool(arr.size) and float(arr.max()) > 1.5:
+        # Float data in 0..255 range: own the buffer before scaling in place.
+        arr = arr.astype(np.float32)
+        arr /= 255.0
+        value_range = "0_255"
     else:
         value_range = "0_1"
+        if dtype != np.float32 or not arr.flags["C_CONTIGUOUS"]:
+            arr = np.ascontiguousarray(arr, dtype=np.float32)
+        # Otherwise keep the already-float32, contiguous, 0..1 array as a view to
+        # avoid duplicating the whole sequence; it is only read downstream
+        # (warp/grayscale), never mutated in place.
 
     adapter = FrameAdapter(
         dtype=dtype,
@@ -176,12 +191,16 @@ def _normalize_video_input(value: Any) -> VideoContext:
 
 def _reconstruct_video(frames: Iterable[np.ndarray], context: VideoContext) -> Any:
     """Pack frames into a BHWC torch tensor (or numpy) following Comfy conventions."""
-    frame_list = list(frames)
-    if not frame_list:
-        stacked = np.zeros((1, context.height, context.width, 3), dtype=np.float32)
+    if isinstance(frames, np.ndarray) and frames.ndim == 4:
+        # Already a preallocated BHWC buffer; avoid an extra full-sequence copy.
+        stacked = frames if frames.shape[0] else np.zeros((1, context.height, context.width, 3), dtype=np.float32)
     else:
-        stacked = np.stack(frame_list, axis=0).astype(np.float32)
-    stacked = np.ascontiguousarray(stacked)
+        frame_list = list(frames)
+        if not frame_list:
+            stacked = np.zeros((1, context.height, context.width, 3), dtype=np.float32)
+        else:
+            stacked = np.stack(frame_list, axis=0)
+    stacked = np.ascontiguousarray(stacked, dtype=np.float32)
     if torch is not None:
         tensor = torch.from_numpy(stacked)
     else:
@@ -213,6 +232,61 @@ def _make_gray(frame: np.ndarray) -> np.ndarray:
     else:
         gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
     return np.clip(gray * 255.0, 0, 255).astype(np.uint8)
+
+
+DEFAULT_ESTIMATION_MAX_SIDE = 960
+
+
+def _working_estimation_size(
+    width: int,
+    height: int,
+    max_side: int = DEFAULT_ESTIMATION_MAX_SIDE,
+) -> Tuple[int, int] | None:
+    """Pick a reduced size for motion estimation, or None to use full resolution.
+
+    Camera-motion estimation does not need full detail; capping the longest side
+    keeps the tracking pass fast and light on large footage while leaving the
+    full-resolution warp untouched. Returns None when the frame is already small
+    enough so smaller inputs are processed unchanged.
+    """
+    longest = max(int(width), int(height))
+    if longest <= max_side:
+        return None
+    scale = max_side / float(longest)
+    small_w = max(1, int(round(width * scale)))
+    small_h = max(1, int(round(height * scale)))
+    if small_w >= width or small_h >= height:
+        return None
+    return small_w, small_h
+
+
+def _make_gray_for_estimation(frame: np.ndarray, working_size: Tuple[int, int] | None) -> np.ndarray:
+    """Grayscale a frame for tracking, optionally downscaled to ``working_size``."""
+    gray = _make_gray(frame)
+    if working_size is None:
+        return gray
+    return cv2.resize(gray, working_size, interpolation=cv2.INTER_AREA)
+
+
+def _rescale_transform_to_full(
+    matrix: np.ndarray,
+    source_size: Tuple[int, int],
+    working_size: Tuple[int, int],
+) -> np.ndarray:
+    """Map a transform estimated at ``working_size`` back to full-resolution coords.
+
+    A coordinate in the full frame maps to the working frame via S = diag(sx, sy);
+    the full-resolution transform is therefore S^-1 @ M_working @ S, which scales
+    translation while leaving rotation/scale invariant.
+    """
+    src_w, src_h = source_size
+    small_w, small_h = working_size
+    sx = small_w / float(src_w)
+    sy = small_h / float(src_h)
+    scale = np.array([[sx, 0.0, 0.0], [0.0, sy, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
+    inv_scale = np.array([[1.0 / sx, 0.0, 0.0], [0.0, 1.0 / sy, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
+    full = inv_scale @ matrix.astype(np.float64) @ scale
+    return full.astype(np.float32)
 
 
 def _matrix_to_params(matrix: np.ndarray, base_mode: TransformMode) -> np.ndarray:
@@ -442,6 +516,8 @@ def _compute_crop_with_keep_fov_parametric(
     keep_fov_target: float,
     safety_margin_px: float,
     max_iterations: int = 18,
+    interrupt_check: Callable[[], None] | None = None,
+    return_masks: bool = True,
 ) -> Tuple[
     List[np.ndarray],
     List[np.ndarray],
@@ -526,6 +602,8 @@ def _compute_crop_with_keep_fov_parametric(
         best_size: List[float] = list(candidate.get("crop_size", [float(width), float(height)]))  # type: ignore[index]
 
         for matrix in candidate["final"]:
+            if interrupt_check is not None:
+                interrupt_check()
             content = cv2.warpPerspective(
                 ones,
                 matrix,
@@ -537,7 +615,11 @@ def _compute_crop_with_keep_fov_parametric(
             content = (content > 0.5).astype(np.float32)
             content = cv2.dilate(content, kernel, iterations=1)
             content = cv2.erode(content, kernel, iterations=1)
-            masks.append(content[..., None])
+            # The caller in the node path discards these masks (the refine pass
+            # rebuilds them), so skip retaining the full-resolution list there and
+            # only keep the min content ratio that drives keep_fov status.
+            if return_masks:
+                masks.append(content[..., None])
 
             coords = np.argwhere(content > 0.5)
             if coords.size == 0:
@@ -661,13 +743,14 @@ def _refine_no_padding_crop(
     width: int,
     height: int,
     safety_shrink_px: int = 1,
+    interrupt_check: Callable[[], None] | None = None,
 ) -> Tuple[List[np.ndarray], List[np.ndarray], List[float], List[float], float]:
     """
     Post-process crop matrices to guarantee padding-free output in crop mode.
     """
     ones = np.ones((height, width), dtype=np.float32)
-    masks_bin: List[np.ndarray] = []
-    for matrix in final_matrices:
+
+    def _warp_binary(matrix: np.ndarray) -> np.ndarray:
         content = cv2.warpPerspective(
             ones,
             matrix,
@@ -676,11 +759,17 @@ def _refine_no_padding_crop(
             borderMode=cv2.BORDER_CONSTANT,
             borderValue=0.0,
         )
-        masks_bin.append((content > 0.5).astype(np.uint8))
+        return (content > 0.5).astype(np.uint8)
 
-    common = masks_bin[0].copy()
-    for mask in masks_bin[1:]:
-        common &= mask
+    # AND the per-frame content masks into ``common`` incrementally instead of
+    # retaining the whole full-resolution mask list; the list is only needed in
+    # the rare degenerate fallbacks below, where it is cheap to recompute.
+    common: np.ndarray | None = None
+    for matrix in final_matrices:
+        if interrupt_check is not None:
+            interrupt_check()
+        mask = _warp_binary(matrix)
+        common = mask.copy() if common is None else (common & mask)
 
     if safety_shrink_px > 0:
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1 + 2 * safety_shrink_px, 1 + 2 * safety_shrink_px))
@@ -689,7 +778,7 @@ def _refine_no_padding_crop(
     if common.max() == 0:
         return (
             list(final_matrices),
-            [mask[..., None].astype(np.float32) for mask in masks_bin],
+            [_warp_binary(matrix)[..., None].astype(np.float32) for matrix in final_matrices],
             [0.0, 0.0],
             [float(width), float(height)],
             0.0,
@@ -699,7 +788,7 @@ def _refine_no_padding_crop(
     if aspect_crop is None:
         return (
             list(final_matrices),
-            [mask[..., None].astype(np.float32) for mask in masks_bin],
+            [_warp_binary(matrix)[..., None].astype(np.float32) for matrix in final_matrices],
             [0.0, 0.0],
             [float(width), float(height)],
             0.0,
@@ -722,6 +811,8 @@ def _refine_no_padding_crop(
     size_best = [crop_w, crop_h]
 
     for matrix in refined_mats:
+        if interrupt_check is not None:
+            interrupt_check()
         content = cv2.warpPerspective(
             ones,
             matrix,
@@ -955,17 +1046,24 @@ def _min_content_ratio(
 
 def _convert_masks_for_output(masks: Iterable[np.ndarray]) -> Any:
     """Convert internal mask list into tensor/array payload for Comfy outputs."""
-    masks_2d: List[np.ndarray] = []
-    for mask in masks:
-        mask_2d = mask[..., 0] if mask.ndim == 3 else mask
-        masks_2d.append(mask_2d.astype(np.float32))
-
-    if not masks_2d:
-        stacked = np.zeros((1, 1, 1), dtype=np.float32)
+    if isinstance(masks, np.ndarray) and masks.ndim in (3, 4):
+        # Already a preallocated (N, H, W) or (N, H, W, 1) buffer.
+        if not masks.shape[0]:
+            stacked = np.zeros((1, 1, 1), dtype=np.float32)
+        else:
+            stacked = masks[..., 0] if masks.ndim == 4 else masks
     else:
-        stacked = np.stack(masks_2d, axis=0)
+        masks_2d: List[np.ndarray] = []
+        for mask in masks:
+            mask_2d = mask[..., 0] if mask.ndim == 3 else mask
+            masks_2d.append(mask_2d.astype(np.float32))
 
-    stacked = np.ascontiguousarray(stacked)
+        if not masks_2d:
+            stacked = np.zeros((1, 1, 1), dtype=np.float32)
+        else:
+            stacked = np.stack(masks_2d, axis=0)
+
+    stacked = np.ascontiguousarray(stacked, dtype=np.float32)
     if torch is not None:
         return torch.from_numpy(stacked)
     return stacked

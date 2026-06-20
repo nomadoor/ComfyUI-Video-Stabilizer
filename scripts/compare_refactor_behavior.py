@@ -287,12 +287,28 @@ def compare_schema(base: dict[str, Any], head: dict[str, Any]) -> None:
 
 
 def compare_helpers(module_name: str, base_module: Any, head_module: Any, frames: list[np.ndarray]) -> None:
+    batch_f32 = np.stack(frames, axis=0)
     cases: dict[str, Any] = {
         "list": frames,
-        "batch": np.stack(frames, axis=0),
-        "dict": {"frames": np.stack(frames, axis=0), "fps": 24.0},
+        "batch": batch_f32,
+        "dict": {"frames": batch_f32, "fps": 24.0},
         "wrapped_frames": [frame[np.newaxis, ...] for frame in frames],
+        # Non-fast-path inputs: float64 0..1, uint8 0..255, and a non-contiguous
+        # float32 view, so the float32-view fast path and the copy paths are both
+        # exercised and must yield identical normalized frames.
+        "float64": batch_f32.astype(np.float64),
+        "uint8": (batch_f32 * 255.0).round().clip(0, 255).astype(np.uint8),
+        "noncontiguous": np.ascontiguousarray(
+            np.stack([frame[:, ::-1, :] for frame in frames], axis=0)
+        )[:, :, ::-1, :],
     }
+    try:
+        import torch  # noqa: PLC0415
+
+        cases["torch_f32"] = torch.from_numpy(batch_f32.copy())
+        cases["torch_uint8"] = torch.from_numpy(cases["uint8"].copy())
+    except ImportError:
+        pass
     for case_name, value in cases.items():
         base_context = base_module._normalize_video_input(value)
         head_context = head_module._normalize_video_input(value)

@@ -106,13 +106,25 @@ def _to_numpy_frame(frame: Any) -> Tuple[np.ndarray, FrameAdapter]:
         squeeze_last_dim = True
 
     dtype = arr.dtype
-    arr = arr.astype(np.float32)
+    value_range: Literal["0_1", "0_255"]
 
-    if dtype == np.uint8 or arr.max() > 1.5:
-        value_range: Literal["0_1", "0_255"] = "0_255"
+    if dtype == np.uint8:
+        # uint8 always needs a fresh float32 buffer; scaling it in place is safe.
+        arr = arr.astype(np.float32)
         arr /= 255.0
+        value_range = "0_255"
+    elif bool(arr.size) and float(arr.max()) > 1.5:
+        # Float data in 0..255 range: own the buffer before scaling in place.
+        arr = arr.astype(np.float32)
+        arr /= 255.0
+        value_range = "0_255"
     else:
         value_range = "0_1"
+        if dtype != np.float32 or not arr.flags["C_CONTIGUOUS"]:
+            arr = np.ascontiguousarray(arr, dtype=np.float32)
+        # Otherwise keep the already-float32, contiguous, 0..1 array as a view to
+        # avoid duplicating the whole sequence; it is only read downstream
+        # (warp/grayscale), never mutated in place.
 
     adapter = FrameAdapter(
         dtype=dtype,

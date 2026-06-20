@@ -329,6 +329,8 @@ def _stabilize_frames(
             progress_pending = 0
         _check_interrupt()
 
+    del gray_frames  # grayscale copies are only needed during estimation
+
     path = np.zeros((len(frames), delta_params[0].shape[0]), dtype=np.float64)
     for idx, delta in enumerate(delta_params, start=1):
         path[idx] = path[idx - 1] + delta
@@ -512,8 +514,6 @@ def _stabilize_frames(
     strength_effective = strength * stabilization_scale
     effective_target_path = path + effective_diffs
 
-    stabilized_frames: List[np.ndarray] = []
-    padding_masks: List[np.ndarray] = []
     padded_ratios: List[float] = []
     padding_detected = False
 
@@ -522,16 +522,25 @@ def _stabilize_frames(
 
     frame_count = len(final_matrices)
 
-    for idx, (frame, matrix) in enumerate(zip(frames, final_matrices)):
+    # Write directly into preallocated arrays instead of building Python lists and
+    # stacking them later; on large sequences the intermediate list plus the stack
+    # copy roughly doubled peak memory. Input frames are released as they are
+    # consumed so resident memory does not hold the whole source sequence at once.
+    out_w, out_h = output_size
+    stabilized_frames = np.empty((frame_count, out_h, out_w, 3), dtype=np.float32)
+    padding_masks = np.empty((frame_count, out_h, out_w, 1), dtype=np.float32)
+
+    for idx, matrix in enumerate(final_matrices):
         warped = cv2.warpPerspective(
-            frame,
+            frames[idx],
             matrix,
             output_size,
             flags=cv2.INTER_LINEAR,
             borderMode=cv2.BORDER_CONSTANT,
             borderValue=frame_border_value,
         )
-        stabilized_frames.append(_ensure_rgb(warped.astype(np.float32)))
+        stabilized_frames[idx] = _ensure_rgb(warped.astype(np.float32))
+        frames[idx] = None  # release the source frame; it is no longer needed
 
         if framing_mode == "crop" and final_content_masks is not None and idx < len(final_content_masks):
             content = final_content_masks[idx][..., 0]
@@ -544,12 +553,12 @@ def _stabilize_frames(
                 borderMode=cv2.BORDER_CONSTANT,
                 borderValue=0.0,
             )
-        mask = (1.0 - (content > 0.5).astype(np.float32))[..., np.newaxis]
+        mask = 1.0 - (content > 0.5).astype(np.float32)
         mask[mask < 1e-3] = 0.0
         if not padding_detected and float(np.max(mask)) > 1e-3:
             padding_detected = True
         padded_ratios.append(float(mask.mean()))
-        padding_masks.append(mask)
+        padding_masks[idx, ..., 0] = mask
         progress_pending += 1
         if progress_pending >= progress_stride or idx == frame_count - 1:
             progress_done += progress_pending

@@ -176,12 +176,16 @@ def _normalize_video_input(value: Any) -> VideoContext:
 
 def _reconstruct_video(frames: Iterable[np.ndarray], context: VideoContext) -> Any:
     """Pack frames into a BHWC torch tensor (or numpy) following Comfy conventions."""
-    frame_list = list(frames)
-    if not frame_list:
-        stacked = np.zeros((1, context.height, context.width, 3), dtype=np.float32)
+    if isinstance(frames, np.ndarray) and frames.ndim == 4:
+        # Already a preallocated BHWC buffer; avoid an extra full-sequence copy.
+        stacked = frames if frames.shape[0] else np.zeros((1, context.height, context.width, 3), dtype=np.float32)
     else:
-        stacked = np.stack(frame_list, axis=0).astype(np.float32)
-    stacked = np.ascontiguousarray(stacked)
+        frame_list = list(frames)
+        if not frame_list:
+            stacked = np.zeros((1, context.height, context.width, 3), dtype=np.float32)
+        else:
+            stacked = np.stack(frame_list, axis=0)
+    stacked = np.ascontiguousarray(stacked, dtype=np.float32)
     if torch is not None:
         tensor = torch.from_numpy(stacked)
     else:
@@ -963,17 +967,24 @@ def _min_content_ratio(
 
 def _convert_masks_for_output(masks: Iterable[np.ndarray]) -> Any:
     """Convert internal mask list into tensor/array payload for Comfy outputs."""
-    masks_2d: List[np.ndarray] = []
-    for mask in masks:
-        mask_2d = mask[..., 0] if mask.ndim == 3 else mask
-        masks_2d.append(mask_2d.astype(np.float32))
-
-    if not masks_2d:
-        stacked = np.zeros((1, 1, 1), dtype=np.float32)
+    if isinstance(masks, np.ndarray) and masks.ndim in (3, 4):
+        # Already a preallocated (N, H, W) or (N, H, W, 1) buffer.
+        if not masks.shape[0]:
+            stacked = np.zeros((1, 1, 1), dtype=np.float32)
+        else:
+            stacked = masks[..., 0] if masks.ndim == 4 else masks
     else:
-        stacked = np.stack(masks_2d, axis=0)
+        masks_2d: List[np.ndarray] = []
+        for mask in masks:
+            mask_2d = mask[..., 0] if mask.ndim == 3 else mask
+            masks_2d.append(mask_2d.astype(np.float32))
 
-    stacked = np.ascontiguousarray(stacked)
+        if not masks_2d:
+            stacked = np.zeros((1, 1, 1), dtype=np.float32)
+        else:
+            stacked = np.stack(masks_2d, axis=0)
+
+    stacked = np.ascontiguousarray(stacked, dtype=np.float32)
     if torch is not None:
         return torch.from_numpy(stacked)
     return stacked

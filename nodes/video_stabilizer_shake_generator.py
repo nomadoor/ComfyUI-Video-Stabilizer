@@ -6,11 +6,10 @@ from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
 from comfy_api.latest import ComfyExtension, io
 
 from .shake_noise import STYLES, generate_shake_motion_meta
-from .stabilizer_utils import _normalize_video_input
+from .stabilizer_utils import _normalize_video_input, _resolve_fps
 
 JSONType = io.Custom("JSON")
 
@@ -92,16 +91,12 @@ class VideoStabilizerShakeGenerator(io.ComfyNode):
         seed: int,
     ) -> io.NodeOutput:
         context = _normalize_video_input(frames_context)
-        fps_candidate = context.fps
-        if not isinstance(fps_candidate, (int, float)) or not np.isfinite(fps_candidate) or fps_candidate <= 0.0:
-            fps_candidate = frame_rate
-        if not isinstance(fps_candidate, (int, float)) or not np.isfinite(fps_candidate) or fps_candidate <= 0.0:
-            fps_candidate = 16.0
+        fps = _resolve_fps(context, frame_rate)
         motion_meta = generate_shake_motion_meta(
             frame_count=len(context.frames),
             width=context.width,
             height=context.height,
-            fps=float(max(1.0, fps_candidate)),
+            fps=fps,
             recipe=STYLES[style],
             amount=amount,
             speed=speed,

@@ -42,7 +42,26 @@
   "per_frame": [
     {"index": 0, "matrix": [[1,0,0],[0,1,0],[0,0,1]]}
   ],
-  "generator": { "preset": "...", "strength": 1.0, "speed": 1.0, "detail": 0.35, "seed": 0 }
+  "generator": {
+    "node": "shake_generator",
+    "style": "handheld",
+    "amount": 1.0,
+    "speed": 1.0,
+    "seed": 0,
+    "recipe": {
+      "pan": 0.40,
+      "tilt": 0.33,
+      "roll": 0.50,
+      "zoom": 0.0030,
+      "drift_freq": 0.35,
+      "tremor": 0.35,
+      "tremor_freq": 5.0,
+      "jitter_rate": 0.0,
+      "step": 0.0,
+      "randomness": 0.3,
+      "virtual_fov": 60.0
+    }
+  }
 }
 ```
 

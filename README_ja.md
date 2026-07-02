@@ -4,13 +4,14 @@
 
 CPU で扱いやすい動画手ぶれ補正、padding mask 出力、再利用できる motion metadata、元の動きへ戻す workflow のための ComfyUI custom node です。
 
-ノードは6種類です。
+有効なノードが5種類、deprecated 互換ノードが1種類あります。
 
 - **Classic**: OpenCV / NumPy による特徴点トラッキング
 - **Flow**: OpenCV DIS を標準で使う dense optical flow
 - **Motion Apply**: motion metadata をフレームへ適用
 - **Shake Generator**: フレームを加工せず、style ベースの motion metadata を生成
 - **Shake Generator Manual**: 明示的な recipe 値から同種の motion metadata を生成
+- **Inverse**: 元の手ブレを戻すための deprecated 互換ノード
 
 https://github.com/user-attachments/assets/7da060c1-d775-47b7-91e6-f7a2ce147389
 

@@ -6,11 +6,10 @@ from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
 from comfy_api.latest import ComfyExtension, io
 
 from .shake_noise import STYLES, ShakeRecipe, generate_shake_motion_meta
-from .stabilizer_utils import _normalize_video_input
+from .stabilizer_utils import _normalize_video_input, _resolve_fps
 
 JSONType = io.Custom("JSON")
 HANDHELD_DEFAULT = STYLES["handheld"]
@@ -51,7 +50,7 @@ class VideoStabilizerShakeGeneratorManual(io.ComfyNode):
             io.Float.Input(
                 "drift_freq",
                 default=HANDHELD_DEFAULT.drift_freq,
-                min=0.05,
+                min=0.0,
                 max=2.0,
                 step=0.05,
                 display_name="Drift Frequency",
@@ -158,11 +157,7 @@ class VideoStabilizerShakeGeneratorManual(io.ComfyNode):
         seed: int,
     ) -> io.NodeOutput:
         context = _normalize_video_input(frames_context)
-        fps_candidate = context.fps
-        if not isinstance(fps_candidate, (int, float)) or not np.isfinite(fps_candidate) or fps_candidate <= 0.0:
-            fps_candidate = frame_rate
-        if not isinstance(fps_candidate, (int, float)) or not np.isfinite(fps_candidate) or fps_candidate <= 0.0:
-            fps_candidate = 16.0
+        fps = _resolve_fps(context, frame_rate)
         recipe = ShakeRecipe(
             pan=pan,
             tilt=tilt,
@@ -181,7 +176,7 @@ class VideoStabilizerShakeGeneratorManual(io.ComfyNode):
             frame_count=len(context.frames),
             width=context.width,
             height=context.height,
-            fps=float(max(1.0, fps_candidate)),
+            fps=fps,
             amount=amount,
             speed=speed,
             seed=seed,

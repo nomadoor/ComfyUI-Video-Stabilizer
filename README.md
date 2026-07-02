@@ -4,13 +4,14 @@
 
 A ComfyUI custom node package for CPU-friendly video stabilization, padding mask generation, reusable motion metadata, and motion restore workflows.
 
-It provides six nodes:
+It provides five active nodes and one deprecated compatibility node:
 
 - **Classic**: sparse feature tracking with OpenCV / NumPy
 - **Flow**: dense optical flow using OpenCV DIS by default
 - **Motion Apply**: applies motion metadata to frames
 - **Shake Generator**: creates deterministic style-based motion metadata without changing pixels
 - **Shake Generator Manual**: creates the same kind of metadata from explicit recipe values
+- **Inverse**: deprecated compatibility node for restoring removed camera shake
 
 https://github.com/user-attachments/assets/7da060c1-d775-47b7-91e6-f7a2ce147389
 

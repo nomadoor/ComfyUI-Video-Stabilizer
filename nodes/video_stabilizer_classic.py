@@ -10,6 +10,7 @@ The implementation follows the requirements in docs/requirements/001-video-stabi
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Tuple
 
 import cv2
@@ -48,6 +49,7 @@ from .stabilizer_utils import (
 )
 
 JSONType = io.Custom("JSON")
+logger = logging.getLogger(__name__)
 
 
 def _attach_motion_meta(meta: Dict[str, Any], fps: float) -> Dict[str, Any]:
@@ -58,6 +60,7 @@ def _attach_motion_meta(meta: Dict[str, Any], fps: float) -> Dict[str, Any]:
             source="estimated_classic",
         )
     except (KeyError, TypeError, ValueError, np.linalg.LinAlgError):
+        logger.debug("Failed to derive motion_meta from stabilization_warp.", exc_info=True)
         return meta
     meta["motion_meta"] = motion_meta
     return meta
@@ -195,7 +198,7 @@ def _stabilize_frames(
             "strength_effective": 0.0,
             "smooth": smooth,
             "fps_requested": fps_requested,
-            "fps_effective": None,
+            "fps_effective": fps_effective,
             "framing": {
                 "mode": framing_mode,
                 "input_size": [context.width, context.height],

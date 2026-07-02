@@ -29,7 +29,7 @@ Manual absolute-value producer:
 - `tilt`: pitch amplitude in degrees, `0.0..5.0`
 - `roll`: in-plane rotation amplitude in degrees, `0.0..5.0`
 - `zoom`: log-scale zoom amplitude, `0.0..0.05`
-- `drift_freq`: low-frequency holding sway in Hz, `0.05..2.0`
+- `drift_freq`: low-frequency holding sway in Hz, `0.0..2.0`
 - `tremor`: high-frequency shake ratio relative to pan/tilt/roll amplitudes, `0.0..2.0`
 - `tremor_freq`: high-frequency shake in Hz, `1.0..15.0`
 - `jitter_rate`: impulse event rate per second, `0.0..3.0`

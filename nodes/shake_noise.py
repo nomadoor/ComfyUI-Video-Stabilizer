@@ -100,7 +100,7 @@ def _smooth_value_noise(
         return np.zeros((0,), dtype=np.float64)
     frequency = float(min(max(frequency, 1e-6), max(fps * 0.5, 1e-6)))
     duration = max((frame_count - 1) / fps, 0.0)
-    control_count = max(4, int(math.ceil(duration * frequency)) + 5)
+    control_count = max(4, math.ceil(duration * frequency) + 5)
     controls = rng.standard_normal(control_count).astype(np.float64)
     positions = np.arange(frame_count, dtype=np.float64) * frequency / fps
     base = np.floor(positions).astype(np.int64) + 1

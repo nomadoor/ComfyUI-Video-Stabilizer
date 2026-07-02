@@ -37,7 +37,7 @@ Input a video or batched images into either `Video Stabilizer Classic` or `Video
 
 Use `padding_mask` when you want VACE or another outpainting workflow to fill borders created by stabilization.
 
-Connect Classic/Flow `meta` to `Video Stabilizer Motion Apply` to restore the removed motion after editing stabilized frames. Connect Shake Generator output to Motion Apply when you want to add generated handheld motion.
+Connect Classic/Flow `motion_meta` plus the original frames to `Video Stabilizer Motion Apply` to reapply the same stabilization transform, or connect edited stabilized frames to restore the original canvas through the embedded legacy warp metadata. Connect Shake Generator output to Motion Apply when you want to add generated handheld motion.
 
 For tuning, start with `Video Stabilizer Shake Generator`, inspect `motion_meta.generator.recipe`, then enter those values in `Video Stabilizer Shake Generator Manual` and adjust the absolute pan/tilt/roll/zoom recipe.
 
@@ -90,7 +90,7 @@ Motion Apply:
 | --- | --- |
 | `frames_stabilized` | Stabilized video frames. |
 | `padding_mask` | Mask of padded / missing regions. |
-| `meta` | JSON diagnostics, including estimated motion, applied stabilization matrices, and additive `motion_meta`. |
+| `motion_meta` | JSON diagnostics, including estimated motion, applied stabilization matrices, and the `motion_meta` block used by Motion Apply. |
 
 ## Inverse Stabilization
 

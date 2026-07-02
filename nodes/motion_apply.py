@@ -6,7 +6,7 @@ from typing import Any, Callable, Dict, Literal, Tuple
 import cv2
 import numpy as np
 
-from .motion_meta import MotionMeta, resolve_motion_meta
+from .motion_meta import MotionMeta, motion_meta_from_stabilization_warp, resolve_motion_meta
 from .stabilizer_utils import VideoContext, _ensure_rgb
 
 ApplyFramingMode = Literal["pad", "crop"]
@@ -40,6 +40,31 @@ def _validate_context(context: VideoContext, motion: MotionMeta) -> None:
             "Frame count mismatch: "
             f"got {len(context.frames)} frame(s), metadata has {motion.frame_count} matrix entry/entries."
         )
+
+
+def _resolve_motion_for_context(meta: Dict[str, Any], context: VideoContext) -> MotionMeta:
+    if not isinstance(meta, dict):
+        return resolve_motion_meta(meta)
+
+    motion_block = meta.get("motion_meta")
+    if isinstance(motion_block, dict):
+        motion = resolve_motion_meta({"motion_meta": motion_block})
+        if (context.width, context.height) == motion.input_size:
+            return motion
+
+    warp_meta = meta.get("stabilization_warp")
+    if isinstance(warp_meta, dict):
+        inverse_block = motion_meta_from_stabilization_warp(
+            warp_meta,
+            fps=float(motion_block.get("fps", 16.0)) if isinstance(motion_block, dict) else 16.0,
+            source="legacy_stabilization",
+        )
+        if inverse_block is not None:
+            inverse_motion = resolve_motion_meta({"motion_meta": inverse_block})
+            if (context.width, context.height) == inverse_motion.input_size:
+                return inverse_motion
+
+    return resolve_motion_meta(meta)
 
 
 def _frame_border_value(context: VideoContext, padding_rgb: Tuple[int, int, int]) -> Any:
@@ -271,7 +296,7 @@ def apply_motion(
     motion_blur_samples: int = 9,
     progress_callback: ProgressCallback | None = None,
 ) -> MotionApplyResult:
-    motion = resolve_motion_meta(meta)
+    motion = _resolve_motion_for_context(meta, context)
     _validate_context(context, motion)
 
     matrices = [transform.matrix for transform in motion.per_frame]

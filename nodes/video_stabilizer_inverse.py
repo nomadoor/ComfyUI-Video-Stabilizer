@@ -65,14 +65,18 @@ class VideoStabilizerInverse(io.ComfyNode):
     ) -> io.NodeOutput:
         context = _normalize_video_input(frames)
         padding_rgb = _parse_padding_color(padding_color)
-        motion = resolve_motion_meta(meta)
+        inverse_meta = dict(meta)
+        inverse_meta.pop("motion_meta", None)
+        motion = resolve_motion_meta(inverse_meta)
         result = apply_motion(
             context,
-            meta,
+            inverse_meta,
             padding_rgb,
             framing_mode="pad",
             interpolation="bilinear",
         )
+        if isinstance(meta, dict) and isinstance(meta.get("motion_meta"), dict):
+            result.meta["motion_meta"] = meta["motion_meta"]
         result.meta.pop("motion_apply", None)
         result.meta["inverse_stabilization"] = {
             "source_size": [int(motion.output_size[0]), int(motion.output_size[1])],

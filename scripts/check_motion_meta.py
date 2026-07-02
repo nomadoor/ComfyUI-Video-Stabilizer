@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT))
 
 from nodes.motion_apply import apply_motion  # noqa: E402
 from nodes.motion_meta import (  # noqa: E402
+    applied_motion_meta_from_stabilization_warp,
     build_motion_meta_v2,
     motion_meta_from_stabilization_warp,
     resolve_motion_meta,
@@ -171,6 +172,20 @@ def main() -> int:
         raise AssertionError("legacy stabilization_warp did not resolve to inverse input/output sizes")
     if not np.allclose(resolved_legacy.per_frame[1].matrix, np.linalg.inv(matrices[1])):
         raise AssertionError("legacy stabilization_warp matrix was not inverted")
+    applied = applied_motion_meta_from_stabilization_warp(warp, fps=24.0, source="estimated_flow")
+    resolved_applied = resolve_motion_meta({"motion_meta": applied})
+    if resolved_applied.input_size != (80, 50) or resolved_applied.output_size != (96, 60):
+        raise AssertionError("applied stabilization motion_meta resolved with wrong dimensions")
+    if not np.allclose(resolved_applied.per_frame[1].matrix, matrices[1]):
+        raise AssertionError("applied stabilization motion_meta should preserve applied matrices")
+    frames_for_apply = _frames(2, width=80, height=50)
+    combined_meta = {"stabilization_warp": warp, "motion_meta": applied}
+    direct_apply = apply_motion(_normalize_video_input(frames_for_apply), combined_meta, (127, 127, 127))
+    if direct_apply.frames.shape[1:3] != (60, 96):
+        raise AssertionError(f"direct applied motion_meta output shape mismatch: {direct_apply.frames.shape}")
+    inverse_apply = apply_motion(_normalize_video_input(direct_apply.frames), combined_meta, (127, 127, 127))
+    if inverse_apply.frames.shape[1:3] != (50, 80):
+        raise AssertionError(f"context-selected inverse motion output shape mismatch: {inverse_apply.frames.shape}")
 
     try:
         resolve_motion_meta({})

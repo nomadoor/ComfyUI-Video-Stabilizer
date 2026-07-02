@@ -27,7 +27,7 @@ except ImportError:  # pragma: no cover - fallback for static analysis
 from comfy_api.latest import ComfyExtension, io
 from comfy.utils import ProgressBar
 
-from .motion_meta import motion_meta_from_stabilization_warp
+from .motion_meta import applied_motion_meta_from_stabilization_warp
 from .stabilizer_utils import (
     _build_stabilization_warp_meta,
     _compute_bounding_boxes,
@@ -59,15 +59,14 @@ JSONType = io.Custom("JSON")
 
 def _attach_motion_meta(meta: Dict[str, Any], fps: float) -> Dict[str, Any]:
     try:
-        motion_meta = motion_meta_from_stabilization_warp(
+        motion_meta = applied_motion_meta_from_stabilization_warp(
             meta["stabilization_warp"],
             fps=fps,
             source="estimated_flow",
         )
     except (KeyError, TypeError, ValueError, np.linalg.LinAlgError):
         return meta
-    if motion_meta is not None:
-        meta["motion_meta"] = motion_meta
+    meta["motion_meta"] = motion_meta
     return meta
 
 
@@ -725,7 +724,7 @@ class VideoStabilizerFlow(io.ComfyNode):
         schema.outputs = [
             io.Image.Output("frames_stabilized", display_name="Stabilized Frames"),
             io.Mask.Output("padding_mask", display_name="Padding Mask"),
-            JSONType.Output("meta", display_name="Meta"),
+            JSONType.Output("motion_meta", display_name="Motion Meta"),
         ]
         return schema
 

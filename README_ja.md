@@ -37,7 +37,7 @@ Flow は通常 DIS optical flow を使います。使えない場合は TV-L1、
 
 `padding_mask` は、手ブレ補正でできた余白を VACE などで補完したいときに使います。
 
-補正済みフレームを編集したあと元の動きを戻す場合は、Classic/Flow の `meta` を `Video Stabilizer Motion Apply` へ接続します。生成した手持ち感を足す場合は Shake Generator の出力を Motion Apply へ接続します。
+Classic/Flow の `motion_meta` と元フレームを `Video Stabilizer Motion Apply` へ接続すると同じ stabilization transform を再適用できます。補正済みフレームを編集したあと元キャンバスへ戻す場合も、埋め込まれた legacy warp metadata により Motion Apply で復元できます。生成した手持ち感を足す場合は Shake Generator の出力を Motion Apply へ接続します。
 
 細かく調整する場合は、まず `Video Stabilizer Shake Generator` で style を試し、`motion_meta.generator.recipe` を確認して、その値を `Video Stabilizer Shake Generator Manual` に転記してから pan / tilt / roll / zoom などを調整します。
 
@@ -90,7 +90,7 @@ Motion Apply:
 | --- | --- |
 | `frames_stabilized` | 補正済みフレーム。 |
 | `padding_mask` | padding / 欠損領域の mask。 |
-| `meta` | 推定 motion、実際に適用した補正行列、追加の `motion_meta` を含む JSON 診断情報。 |
+| `motion_meta` | 推定 motion、実際に適用した補正行列、Motion Apply 用の `motion_meta` block を含む JSON 診断情報。 |
 
 ## Inverse stabilization
 

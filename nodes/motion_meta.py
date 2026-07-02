@@ -188,6 +188,38 @@ def motion_meta_from_stabilization_warp(
     )
 
 
+def applied_motion_meta_from_stabilization_warp(
+    warp_meta: Dict[str, Any],
+    fps: float,
+    source: str,
+) -> Dict[str, Any]:
+    if not isinstance(warp_meta, dict):
+        raise ValueError("stabilization_warp must be an object.")
+    if warp_meta.get("matrix_convention") != "source_to_stabilized":
+        raise ValueError(
+            "stabilization_warp.matrix_convention must be 'source_to_stabilized', "
+            f"got {warp_meta.get('matrix_convention')!r}."
+        )
+    source_size = _read_positive_size("stabilization_warp", warp_meta, "source_size")
+    output_size = _read_positive_size("stabilization_warp", warp_meta, "output_size")
+    per_frame = warp_meta.get("per_frame")
+    if not isinstance(per_frame, list):
+        raise ValueError("stabilization_warp.per_frame must be a list.")
+
+    matrices = [
+        _read_finite_matrix("stabilization_warp", entry, idx, "applied_matrix")
+        for idx, entry in enumerate(per_frame)
+    ]
+    return build_motion_meta_v2(
+        source=source,
+        frame_count=len(matrices),
+        fps=fps,
+        input_size=source_size,
+        output_size=output_size,
+        matrices=matrices,
+    )
+
+
 def resolve_motion_meta(meta: Dict[str, Any]) -> MotionMeta:
     if not isinstance(meta, dict):
         raise ValueError("meta must be a dictionary containing motion_meta or stabilization_warp.")

@@ -51,7 +51,7 @@
 - matrixは**絶対ピクセル座標の3x3**(既存metaと同じ流儀)。`center` や `params`(tx/ty/rot分解)は**入れない**。matrixが唯一の真実。
 - `input_size` = Apply への入力フレームサイズ(要検証)、`output_size` = Apply の出力キャンバスサイズ。復元用途では両者が異なりうる。Shake用途では同一。
 - `generator` は `source=="generated_shake"` のときのみ。
-- **Classic/Flow が書き出す motion_meta の中身は「取り除いたカメラモーション」= `inv(applied_matrix)`**。つまり `input_size = stabilization_warp.output_size`、`output_size = stabilization_warp.source_size`、`per_frame[i].matrix = inv(applied_matrix[i])`。これで「Classic/Flow の motion_meta を Motion Apply に繋ぐ = 旧Inverse」が成立する。
+- **Classic/Flow が書き出す motion_meta の中身は「安定化時に実際に適用した変換」= `applied_matrix`**。つまり `input_size = stabilization_warp.source_size`、`output_size = stabilization_warp.output_size`、`per_frame[i].matrix = applied_matrix[i]`。これで「元フレーム + Classic/Flow の motion_meta を Motion Apply に繋ぐ = stabilizer出力の再適用」が成立する。旧Inverse互換は `stabilization_warp` fallback が `inv(applied_matrix)` を作ることで維持する。
 - 旧 `stabilization_warp` は**そのまま残す**(削除・変更禁止)。v2は追加のみ。
 
 ### nodes/motion_meta.py(新規)
@@ -183,9 +183,9 @@ interpolation は `cv2.INTER_LINEAR` / `cv2.INTER_CUBIC`。maskは常に `INTER_
 
 - `display_name` の括弧除去のみ(node_id・入出力・widget順は不変)。
 - `_stabilize_frames` の meta 組み立て箇所(classic 512-549 / flow 581-621 と、空入力・単一フレーム・crop bypass の各return経路)で、`stabilization_warp` を作った直後に `motion_meta` ブロックを追加:
-  - `per_frame[i].matrix = inv(applied_matrix[i])`、`input_size = warp.output_size`、`output_size = warp.source_size`、`fps = fps_effective`、`source = "estimated_classic" / "estimated_flow"`。
-  - 逆行列計算が `LinAlgError` の場合は **motion_meta ブロックを省略して続行**(soft-fail。stabilization自体は成功しているので落とさない)。
-- 共通化のため、この変換は `motion_meta.py` に `motion_meta_from_stabilization_warp(warp_meta, fps, source)` として実装し、Classic/Flow 両方から呼ぶ。
+  - `per_frame[i].matrix = applied_matrix[i]`、`input_size = warp.source_size`、`output_size = warp.output_size`、`fps = fps_effective`、`source = "estimated_classic" / "estimated_flow"`。
+  - 既存 `stabilization_warp` fallback は inverse restoration 用に `inv(applied_matrix)` を作るが、Classic/Flow が出力する top-level `motion_meta` は inverse ではない。
+- 共通化のため、この変換は `motion_meta.py` に `applied_motion_meta_from_stabilization_warp(warp_meta, fps, source)` として実装し、Classic/Flow 両方から呼ぶ。
 
 ---
 

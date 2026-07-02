@@ -127,13 +127,13 @@ def _modulated_noise(
     frame_count: int,
     fps: float,
     frequency: float,
-    pace: float,
+    speed: float,
     randomness: float,
 ) -> np.ndarray:
-    base = _smooth_value_noise(rng, frame_count, fps, frequency * pace)
+    base = _smooth_value_noise(rng, frame_count, fps, frequency * speed)
     if frame_count <= 0 or randomness <= 0.0:
         return base
-    modulation = _smooth_value_noise(rng, frame_count, fps, 0.2 * pace)
+    modulation = _smooth_value_noise(rng, frame_count, fps, 0.2 * speed)
     modulation = modulation / max(float(np.max(np.abs(modulation))), 1e-6)
     envelope = np.clip(1.0 + modulation * randomness, 0.0, 2.0)
     return base * envelope
@@ -144,14 +144,14 @@ def _jitter_events(
     frame_count: int,
     fps: float,
     rate: float,
-    pace: float,
+    speed: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     zeros = np.zeros((frame_count,), dtype=np.float64)
     if frame_count <= 0 or rate <= 0.0:
         return zeros.copy(), zeros.copy(), zeros.copy()
 
     duration = frame_count / fps
-    event_count = int(rng.poisson(rate * pace * duration))
+    event_count = int(rng.poisson(rate * speed * duration))
     pan = zeros.copy()
     tilt = zeros.copy()
     roll = zeros.copy()
@@ -175,7 +175,7 @@ def _walking_step(
     rng: np.random.Generator,
     frame_count: int,
     fps: float,
-    pace: float,
+    speed: float,
     randomness: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     zeros = np.zeros((frame_count,), dtype=np.float64)
@@ -184,10 +184,10 @@ def _walking_step(
 
     t = np.arange(frame_count, dtype=np.float64) / fps
     phase = float(rng.uniform(0.0, 2.0 * math.pi))
-    amp_noise = _smooth_value_noise(rng, frame_count, fps, 0.25 * pace)
+    amp_noise = _smooth_value_noise(rng, frame_count, fps, 0.25 * speed)
     amp_noise = amp_noise / max(float(np.max(np.abs(amp_noise))), 1e-6)
     envelope = np.clip(1.0 + amp_noise * randomness, 0.0, 2.0)
-    step_freq = 1.9 * pace
+    step_freq = 1.9 * speed
     tilt = np.sin(2.0 * math.pi * step_freq * t + phase) * envelope
     sway = np.sin(2.0 * math.pi * (step_freq * 0.5) * t + phase * 0.73) * envelope
     roll = np.sin(2.0 * math.pi * (step_freq * 0.5) * t + phase * 1.31) * envelope
@@ -200,14 +200,14 @@ def generate_shake_components(
     frame_count: int,
     fps: float,
     amount: float,
-    pace: float,
+    speed: float,
     seed: int,
 ) -> ShakeComponents:
     recipe = clamp_recipe(recipe)
     frame_count = int(frame_count)
     fps = float(max(1.0, fps))
     amount = float(np.clip(amount, 0.0, 3.0))
-    pace = float(np.clip(pace, 0.1, 3.0))
+    speed = float(np.clip(speed, 0.1, 3.0))
     if frame_count < 0:
         raise ValueError("frame_count must be non-negative.")
 
@@ -217,21 +217,21 @@ def generate_shake_components(
     # RNG consumption order is compatibility-sensitive:
     # drift pan/tilt/roll/zoom, tremor pan/tilt/roll/zoom, jitter, walking step.
     if recipe.drift_freq > 0.0:
-        drift_pan = _modulated_noise(rng, frame_count, fps, recipe.drift_freq, pace, recipe.randomness)
-        drift_tilt = _modulated_noise(rng, frame_count, fps, recipe.drift_freq, pace, recipe.randomness)
-        drift_roll = _modulated_noise(rng, frame_count, fps, recipe.drift_freq, pace, recipe.randomness)
-        drift_zoom = _modulated_noise(rng, frame_count, fps, recipe.drift_freq, pace, recipe.randomness)
+        drift_pan = _modulated_noise(rng, frame_count, fps, recipe.drift_freq, speed, recipe.randomness)
+        drift_tilt = _modulated_noise(rng, frame_count, fps, recipe.drift_freq, speed, recipe.randomness)
+        drift_roll = _modulated_noise(rng, frame_count, fps, recipe.drift_freq, speed, recipe.randomness)
+        drift_zoom = _modulated_noise(rng, frame_count, fps, recipe.drift_freq, speed, recipe.randomness)
     else:
         drift_pan = drift_tilt = drift_roll = drift_zoom = zeros
 
-    tremor_pan = _modulated_noise(rng, frame_count, fps, recipe.tremor_freq, pace, recipe.randomness)
-    tremor_tilt = _modulated_noise(rng, frame_count, fps, recipe.tremor_freq, pace, recipe.randomness)
-    tremor_roll = _modulated_noise(rng, frame_count, fps, recipe.tremor_freq, pace, recipe.randomness)
-    tremor_zoom = _modulated_noise(rng, frame_count, fps, recipe.tremor_freq, pace, recipe.randomness)
+    tremor_pan = _modulated_noise(rng, frame_count, fps, recipe.tremor_freq, speed, recipe.randomness)
+    tremor_tilt = _modulated_noise(rng, frame_count, fps, recipe.tremor_freq, speed, recipe.randomness)
+    tremor_roll = _modulated_noise(rng, frame_count, fps, recipe.tremor_freq, speed, recipe.randomness)
+    tremor_zoom = _modulated_noise(rng, frame_count, fps, recipe.tremor_freq, speed, recipe.randomness)
 
-    jitter_pan, jitter_tilt, jitter_roll = _jitter_events(rng, frame_count, fps, recipe.jitter_rate, pace)
+    jitter_pan, jitter_tilt, jitter_roll = _jitter_events(rng, frame_count, fps, recipe.jitter_rate, speed)
     if recipe.step > 0.0:
-        step_pan, step_tilt, step_roll = _walking_step(rng, frame_count, fps, pace, recipe.randomness)
+        step_pan, step_tilt, step_roll = _walking_step(rng, frame_count, fps, speed, recipe.randomness)
     else:
         step_pan = step_tilt = step_roll = zeros
 
@@ -288,7 +288,7 @@ def generate_shake_motion_meta(
     height: int,
     fps: float,
     amount: float,
-    pace: float,
+    speed: float,
     seed: int,
     node: str = "shake_generator",
     style: str = "manual",
@@ -302,13 +302,13 @@ def generate_shake_motion_meta(
         raise ValueError("frame_count must be non-negative and width/height must be positive.")
 
     amount = float(np.clip(amount, 0.0, 3.0))
-    pace = float(np.clip(pace, 0.1, 3.0))
+    speed = float(np.clip(speed, 0.1, 3.0))
     components = generate_shake_components(
         recipe=recipe,
         frame_count=frame_count,
         fps=fps,
         amount=amount,
-        pace=pace,
+        speed=speed,
         seed=seed,
     )
 
@@ -336,7 +336,7 @@ def generate_shake_motion_meta(
             "node": node,
             "style": style,
             "amount": amount,
-            "pace": pace,
+            "speed": speed,
             "seed": int(seed),
             "recipe": recipe_to_dict(recipe),
         },

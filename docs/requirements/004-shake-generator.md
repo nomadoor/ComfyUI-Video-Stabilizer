@@ -16,7 +16,7 @@ Simple style-based producer:
 - `frame_rate`: fallback fps, default `16.0`
 - `style`: `tripod | handheld | walking | action | vibration`, default `handheld`
 - `amount`: global motion amplitude multiplier, `0.0..3.0`
-- `pace`: global frequency multiplier, `0.1..3.0`
+- `speed`: global frequency multiplier, `0.1..3.0`
 - `seed`: ComfyUI fixed seed control
 
 ### Video Stabilizer Shake Generator Manual
@@ -37,7 +37,7 @@ Manual absolute-value producer:
 - `randomness`: slow amplitude variation depth, `0.0..1.0`
 - `virtual_fov`: projection FOV in degrees, `10.0..120.0`
 - `amount`: global motion amplitude multiplier, `0.0..3.0`
-- `pace`: global frequency multiplier, `0.1..3.0`
+- `speed`: global frequency multiplier, `0.1..3.0`
 - `seed`: ComfyUI fixed seed control
 
 Manual defaults match the `handheld` style exactly.
@@ -51,7 +51,7 @@ Both nodes write resolved absolute values to `motion_meta.generator.recipe`:
   "node": "shake_generator",
   "style": "walking",
   "amount": 1.0,
-  "pace": 1.0,
+  "speed": 1.0,
   "seed": 0,
   "recipe": {
     "pan": 0.46,
@@ -69,7 +69,7 @@ Both nodes write resolved absolute values to `motion_meta.generator.recipe`:
 }
 ```
 
-The recipe is recorded before `amount` and `pace` are applied. Users can copy it into the Manual node to continue from a style preset with visible, editable absolute values.
+The recipe is recorded before `amount` and `speed` are applied. Users can copy it into the Manual node to continue from a style preset with visible, editable absolute values.
 
 ## Motion Model
 
@@ -107,6 +107,6 @@ Values below are the amount `1.0` baseline. Pan, tilt, roll, and step are degree
 
 ## Determinism
 
-The same `(frame_count, width, height, fps, recipe, amount, pace, seed)` must produce identical JSON. The implementation uses only a local NumPy generator created from `seed`; global random APIs, time, and hidden state are not allowed.
+The same `(frame_count, width, height, fps, recipe, amount, speed, seed)` must produce identical JSON. The implementation uses only a local NumPy generator created from `seed`; global random APIs, time, and hidden state are not allowed.
 
-Frequencies are multiplied by `pace` and clamped to `fps / 2` to avoid aliasing.
+Frequencies are multiplied by `speed` and clamped to `fps / 2` to avoid aliasing.

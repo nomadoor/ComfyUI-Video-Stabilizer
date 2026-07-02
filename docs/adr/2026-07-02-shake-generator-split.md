@@ -21,6 +21,6 @@ Second, multipliers are not a substitute for editable preset values. A list of `
 
 ## Consequences
 
-Style presets and manual editing are separate workflows. To bridge them, generated metadata records `generator.recipe`, the resolved absolute values before `amount` and `pace` are applied. Users can inspect that recipe and enter the same values in the Manual node.
+Style presets and manual editing are separate workflows. To bridge them, generated metadata records `generator.recipe`, the resolved absolute values before `amount` and `speed` are applied. Users can inspect that recipe and enter the same values in the Manual node.
 
 This design works consistently across ComfyUI frontend generations because it does not depend on widget hiding or dynamic widget updates.

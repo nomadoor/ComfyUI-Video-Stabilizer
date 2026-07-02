@@ -44,7 +44,7 @@ def _generator_block() -> dict[str, object]:
         "node": "shake_generator",
         "style": "handheld",
         "amount": 1.0,
-        "pace": 1.0,
+        "speed": 1.0,
         "seed": 0,
         "recipe": {
             "pan": 0.40,
@@ -97,7 +97,7 @@ def _shake(
     height: int = 48,
     fps: float = 16.0,
     amount: float = 1.0,
-    pace: float = 1.0,
+    speed: float = 1.0,
     seed: int = 123,
 ) -> dict:
     return generate_shake_motion_meta(
@@ -107,7 +107,7 @@ def _shake(
         height=height,
         fps=fps,
         amount=amount,
-        pace=pace,
+        speed=speed,
         seed=seed,
         node="shake_generator",
         style=style,
@@ -122,7 +122,7 @@ def _manual_shake(
     height: int = 48,
     fps: float = 16.0,
     amount: float = 1.0,
-    pace: float = 1.0,
+    speed: float = 1.0,
     seed: int = 123,
 ) -> dict:
     return generate_shake_motion_meta(
@@ -132,7 +132,7 @@ def _manual_shake(
         height=height,
         fps=fps,
         amount=amount,
-        pace=pace,
+        speed=speed,
         seed=seed,
         node="shake_generator_manual",
         style="manual",
@@ -192,7 +192,7 @@ def main() -> int:
     if not np.allclose(np.asarray(shake_a["per_frame"][0]["matrix"], dtype=np.float64), np.eye(3), atol=1e-9):
         raise AssertionError("shake first frame is not identity")
 
-    _shake("vibration", frame_count=4, fps=8.0, pace=3.0, seed=0)
+    _shake("vibration", frame_count=4, fps=8.0, speed=3.0, seed=0)
 
     manual_default = _manual_shake(STYLES["handheld"], seed=33)
     simple_default = _shake("handheld", seed=33)
@@ -216,7 +216,7 @@ def main() -> int:
         frame_count=128,
         fps=16.0,
         amount=1.0,
-        pace=1.0,
+        speed=1.0,
         seed=77,
     )
     vibration_components = generate_shake_components(
@@ -224,7 +224,7 @@ def main() -> int:
         frame_count=128,
         fps=16.0,
         amount=1.0,
-        pace=1.0,
+        speed=1.0,
         seed=77,
     )
     walking_components = generate_shake_components(
@@ -232,7 +232,7 @@ def main() -> int:
         frame_count=128,
         fps=16.0,
         amount=1.0,
-        pace=1.0,
+        speed=1.0,
         seed=77,
     )
     tripod_block = _shake("tripod", frame_count=128, width=128, height=72, seed=77)

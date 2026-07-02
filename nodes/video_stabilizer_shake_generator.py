@@ -59,12 +59,12 @@ class VideoStabilizerShakeGenerator(io.ComfyNode):
                 display_mode=io.NumberDisplay.slider,
             ),
             io.Float.Input(
-                "pace",
+                "speed",
                 default=1.0,
                 min=0.1,
                 max=3.0,
                 step=0.05,
-                display_name="Pace",
+                display_name="Speed",
                 display_mode=io.NumberDisplay.slider,
             ),
             io.Int.Input(
@@ -88,7 +88,7 @@ class VideoStabilizerShakeGenerator(io.ComfyNode):
         frame_rate: float,
         style: str,
         amount: float,
-        pace: float,
+        speed: float,
         seed: int,
     ) -> io.NodeOutput:
         context = _normalize_video_input(frames_context)
@@ -104,7 +104,7 @@ class VideoStabilizerShakeGenerator(io.ComfyNode):
             fps=float(max(1.0, fps_candidate)),
             recipe=STYLES[style],
             amount=amount,
-            pace=pace,
+            speed=speed,
             seed=seed,
             node="shake_generator",
             style=style,

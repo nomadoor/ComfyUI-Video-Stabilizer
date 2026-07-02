@@ -32,7 +32,7 @@ frames_context : io.Image.Input      # 現行どおり
 frame_rate     : io.Float.Input(16.0)
 style          : io.Combo.Input(["tripod","handheld","walking","action","vibration"], default="handheld")
 amount         : io.Float.Input(1.0, 0.0-3.0, step=0.05)
-pace           : io.Float.Input(1.0, 0.1-3.0, step=0.05)
+speed          : io.Float.Input(1.0, 0.1-3.0, step=0.05)
 seed           : io.Int.Input(control_after_generate=fixed)
 ```
 
@@ -53,11 +53,11 @@ drift_freq     : io.Float.Input(0.35, 0.05-2.0, step=0.05)  # 低周波の構え
 tremor         : io.Float.Input(0.35, 0.0-2.0, step=0.05)   # 高周波の震え(pan/tilt/roll振幅に対する比率)
 tremor_freq    : io.Float.Input(5.0, 1.0-15.0, step=0.5)    # (Hz)
 jitter_rate    : io.Float.Input(0.0, 0.0-3.0, step=0.1)     # 突発的な跳ね(回/秒)
-step           : io.Float.Input(0.0, 0.0-2.0, step=0.05)    # 歩行バウンス振幅(度)。>0でf_step=1.9Hz×paceのリズムが乗る
+step           : io.Float.Input(0.0, 0.0-2.0, step=0.05)    # 歩行バウンス振幅(度)。>0でf_step=1.9Hz×speedのリズムが乗る
 randomness     : io.Float.Input(0.3, 0.0-1.0, step=0.05)
 virtual_fov    : io.Float.Input(60.0, 10.0-120.0, step=1.0)
 amount         : io.Float.Input(1.0, 0.0-3.0, step=0.05)
-pace           : io.Float.Input(1.0, 0.1-3.0, step=0.05)
+speed          : io.Float.Input(1.0, 0.1-3.0, step=0.05)
 seed           : io.Int.Input(control_after_generate=fixed)
 ```
 
@@ -74,7 +74,7 @@ class ShakeRecipe:  # 現行のShakeStyle定数表と同じフィールド構成
 
 STYLES: Dict[str, ShakeRecipe]  # tripod/handheld/walking/action/vibration の定数表(現行値を維持)
 
-generate_shake_motion_meta(recipe: ShakeRecipe, frame_count, width, height, fps, amount, pace, seed) -> dict
+generate_shake_motion_meta(recipe: ShakeRecipe, frame_count, width, height, fps, amount, speed, seed) -> dict
 ```
 
 簡易版は `STYLES[style]` を、Manual版はwidget値から組んだ `ShakeRecipe` を渡すだけ。生成アルゴリズム本体(角度モデル、4系統合成、先頭identity化、Nyquistクランプ、rng消費順)は変更しない。
@@ -88,7 +88,7 @@ generate_shake_motion_meta(recipe: ShakeRecipe, frame_count, width, height, fps,
   "node": "shake_generator" | "shake_generator_manual",
   "style": "walking" | "manual",
   "amount": 1.0,
-  "pace": 1.0,
+  "speed": 1.0,
   "seed": 0,
   "recipe": {
     "pan": 0.70, "tilt": 0.90, "roll": 0.70, "zoom": 0.004,
@@ -99,7 +99,7 @@ generate_shake_motion_meta(recipe: ShakeRecipe, frame_count, width, height, fps,
 }
 ```
 
-- `recipe` は amount/pace 適用**前**の絶対値(=Manualノードのwidgetにそのまま打ち込める値)。
+- `recipe` は amount/speed 適用**前**の絶対値(=Manualノードのwidgetにそのまま打ち込める値)。
 - これにより「簡易版でstyleを試す → metaのrecipeを見る → Manualに転記して微調整」という移行パスが成立し、「presetの中身が見えない」問題も解決する。
 - READMEにこのワークフローを1段落で記載すること。
 
@@ -114,7 +114,7 @@ generate_shake_motion_meta(recipe: ShakeRecipe, frame_count, width, height, fps,
 
 ## 5. テスト(scripts/check_motion_meta.py を更新)
 
-1. **デフォルト等価**: 簡易版 `style="handheld"` と Manual版デフォルト値が、同一 frames/fps/amount/pace/seed で**完全に同一の motion_meta** を出す。
+1. **デフォルト等価**: 簡易版 `style="handheld"` と Manual版デフォルト値が、同一 frames/fps/amount/speed/seed で**完全に同一の motion_meta** を出す。
 2. **recipeラウンドトリップ**: 簡易版の任意style(全5種)で出力した `generator.recipe` をManual版の入力に与えると、同一seedで per_frame matrices が完全一致する。
 3. 既存項目の維持: 決定性 / seed差分 / フレーム数一致 / 先頭identity / style判別性 / Nyquist / blur=0等価 / 隠れランダム性禁止。乗数削除に伴い `roll_amount=0` テストは Manual版 `roll=0.0` に置き換え。
 4. `python3 scripts/validate_repo.py` 通過(py_compile対象に新ファイルを追加)。

@@ -70,7 +70,7 @@ Shake Generator:
 | --- | ---: | --- |
 | `style` | `handheld` | `tripod`, `handheld`, `walking`, `action`, or `vibration`. |
 | `amount` | `1.0` | Overall shake amplitude. |
-| `pace` | `1.0` | Overall shake speed. |
+| `speed` | `1.0` | Overall shake speed. |
 | `seed` | `0` | Deterministic seed. |
 
 Shake Generator Manual exposes the resolved recipe directly: `pan`, `tilt`, `roll`, `zoom`, `drift_freq`, `tremor`, `tremor_freq`, `jitter_rate`, `step`, `randomness`, and `virtual_fov`.

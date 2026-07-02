@@ -15,7 +15,7 @@ Move motion blur to Video Stabilizer Motion Apply.
 
 ## Rationale
 
-The old presets were mostly strength levels, which overlapped with `strength` and made the UI hard to reason about. The new `style` control describes the character of the motion, while `amount` controls volume and `pace` controls speed.
+The old presets were mostly strength levels, which overlapped with `strength` and made the UI hard to reason about. The new `style` control describes the character of the motion, while `amount` controls volume and `speed` controls shake speed.
 
 Putting style presets and manual controls in one Python-only node was also rejected. ComfyUI Python nodes cannot update other widget values when one widget changes without a custom frontend extension. Style presets and manual editing therefore need separate nodes.
 

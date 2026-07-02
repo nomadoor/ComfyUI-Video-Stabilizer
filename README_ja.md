@@ -70,7 +70,7 @@ Shake Generator:
 | --- | ---: | --- |
 | `style` | `handheld` | `tripod`, `handheld`, `walking`, `action`, `vibration` から揺れの種類を選びます。 |
 | `amount` | `1.0` | 揺れ全体の強さ。 |
-| `pace` | `1.0` | 揺れ全体の速さ。 |
+| `speed` | `1.0` | 揺れ全体の速さ。 |
 | `seed` | `0` | 決定的生成用の seed。 |
 
 Shake Generator Manual は解決済み recipe を直接公開します: `pan`, `tilt`, `roll`, `zoom`, `drift_freq`, `tremor`, `tremor_freq`, `jitter_rate`, `step`, `randomness`, `virtual_fov`。

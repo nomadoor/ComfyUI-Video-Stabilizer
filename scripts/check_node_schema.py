@@ -65,7 +65,7 @@ EXPECTED_NODES = {
     "nodes/video_stabilizer_shake_generator.py": {
         "node_id": "video_stabilizer_shake_generator",
         "display_name": "Video Stabilizer Shake Generator",
-        "inputs": ["frames_context", "frame_rate", "style", "amount", "pace", "seed"],
+        "inputs": ["frames_context", "frame_rate", "style", "amount", "speed", "seed"],
         "outputs": ["motion_meta"],
     },
     "nodes/video_stabilizer_shake_generator_manual.py": {
@@ -86,7 +86,7 @@ EXPECTED_NODES = {
             "randomness",
             "virtual_fov",
             "amount",
-            "pace",
+            "speed",
             "seed",
         ],
         "outputs": ["motion_meta"],

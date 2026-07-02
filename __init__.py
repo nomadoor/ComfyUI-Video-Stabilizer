@@ -14,6 +14,7 @@ from .nodes.video_stabilizer_classic import VideoStabilizerClassic
 from .nodes.video_stabilizer_flow import VideoStabilizerFlow
 from .nodes.video_stabilizer_motion_apply import VideoStabilizerMotionApply
 from .nodes.video_stabilizer_shake_generator import VideoStabilizerShakeGenerator
+from .nodes.video_stabilizer_shake_generator_manual import VideoStabilizerShakeGeneratorManual
 
 __all__ = ["comfy_entrypoint"]
 
@@ -25,6 +26,7 @@ class VideoStabilizerSuiteExtension(ComfyExtension):
             VideoStabilizerFlow,
             VideoStabilizerMotionApply,
             VideoStabilizerShakeGenerator,
+            VideoStabilizerShakeGeneratorManual,
             VideoStabilizerInverse,
         ]
 

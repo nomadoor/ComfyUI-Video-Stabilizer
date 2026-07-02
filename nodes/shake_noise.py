@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
-from typing import Dict, Tuple
+from dataclasses import asdict, dataclass
+from typing import Dict
 
 import numpy as np
 
@@ -10,25 +10,26 @@ from .motion_meta import build_motion_meta_v2
 
 
 @dataclass(frozen=True)
-class ShakeStyle:
-    pan_amp: float
-    tilt_amp: float
-    roll_amp: float
-    zoom_amp: float
+class ShakeRecipe:
+    pan: float
+    tilt: float
+    roll: float
+    zoom: float
     drift_freq: float
-    drift_enabled: bool
-    tremor_ratio: float
+    tremor: float
     tremor_freq: float
     jitter_rate: float
-    step_enabled: bool
+    step: float
+    randomness: float
+    virtual_fov: float
 
 
-STYLES: Dict[str, ShakeStyle] = {
-    "tripod": ShakeStyle(0.03, 0.03, 0.02, 0.0002, 0.20, True, 0.15, 4.0, 0.0, False),
-    "handheld": ShakeStyle(0.40, 0.33, 0.50, 0.0030, 0.35, True, 0.35, 5.0, 0.0, False),
-    "walking": ShakeStyle(0.46, 0.60, 0.70, 0.0040, 0.30, True, 0.30, 5.0, 0.0, True),
-    "action": ShakeStyle(0.80, 0.66, 1.00, 0.0060, 0.50, True, 0.80, 6.0, 0.5, False),
-    "vibration": ShakeStyle(0.15, 0.15, 0.10, 0.0010, 0.00, False, 1.00, 8.0, 0.0, False),
+STYLES: Dict[str, ShakeRecipe] = {
+    "tripod": ShakeRecipe(0.03, 0.03, 0.02, 0.0002, 0.20, 0.15, 4.0, 0.0, 0.0, 0.3, 60.0),
+    "handheld": ShakeRecipe(0.40, 0.33, 0.50, 0.0030, 0.35, 0.35, 5.0, 0.0, 0.0, 0.3, 60.0),
+    "walking": ShakeRecipe(0.46, 0.60, 0.70, 0.0040, 0.30, 0.30, 5.0, 0.0, 0.60, 0.3, 60.0),
+    "action": ShakeRecipe(0.80, 0.66, 1.00, 0.0060, 0.50, 0.80, 6.0, 0.5, 0.0, 0.3, 60.0),
+    "vibration": ShakeRecipe(0.15, 0.15, 0.10, 0.0010, 0.00, 1.00, 8.0, 0.0, 0.0, 0.3, 60.0),
 }
 
 
@@ -38,6 +39,44 @@ class ShakeComponents:
     tilt_deg: np.ndarray
     roll_deg: np.ndarray
     zoom_log: np.ndarray
+
+
+def recipe_to_dict(recipe: ShakeRecipe) -> dict[str, float]:
+    return {key: float(value) for key, value in asdict(recipe).items()}
+
+
+def clamp_recipe(recipe: ShakeRecipe) -> ShakeRecipe:
+    return ShakeRecipe(
+        pan=float(np.clip(recipe.pan, 0.0, 5.0)),
+        tilt=float(np.clip(recipe.tilt, 0.0, 5.0)),
+        roll=float(np.clip(recipe.roll, 0.0, 5.0)),
+        zoom=float(np.clip(recipe.zoom, 0.0, 0.05)),
+        drift_freq=float(np.clip(recipe.drift_freq, 0.0, 2.0)),
+        tremor=float(np.clip(recipe.tremor, 0.0, 2.0)),
+        tremor_freq=float(np.clip(recipe.tremor_freq, 1.0, 15.0)),
+        jitter_rate=float(np.clip(recipe.jitter_rate, 0.0, 3.0)),
+        step=float(np.clip(recipe.step, 0.0, 2.0)),
+        randomness=float(np.clip(recipe.randomness, 0.0, 1.0)),
+        virtual_fov=float(np.clip(recipe.virtual_fov, 10.0, 120.0)),
+    )
+
+
+def recipe_from_mapping(value: dict[str, object]) -> ShakeRecipe:
+    return clamp_recipe(
+        ShakeRecipe(
+            pan=float(value["pan"]),
+            tilt=float(value["tilt"]),
+            roll=float(value["roll"]),
+            zoom=float(value["zoom"]),
+            drift_freq=float(value["drift_freq"]),
+            tremor=float(value["tremor"]),
+            tremor_freq=float(value["tremor_freq"]),
+            jitter_rate=float(value["jitter_rate"]),
+            step=float(value["step"]),
+            randomness=float(value["randomness"]),
+            virtual_fov=float(value["virtual_fov"]),
+        )
+    )
 
 
 def _catmull_rom(p0: np.ndarray, p1: np.ndarray, p2: np.ndarray, p3: np.ndarray, u: np.ndarray) -> np.ndarray:
@@ -157,91 +196,55 @@ def _walking_step(
 
 def generate_shake_components(
     *,
+    recipe: ShakeRecipe,
     frame_count: int,
     fps: float,
-    style: str,
     amount: float,
     pace: float,
     seed: int,
-    pan_amount: float = 1.0,
-    tilt_amount: float = 1.0,
-    roll_amount: float = 1.0,
-    zoom_amount: float = 1.0,
-    drift_amount: float = 1.0,
-    tremor_amount: float = 1.0,
-    jitter_amount: float = 1.0,
-    randomness: float = 0.3,
 ) -> ShakeComponents:
-    if style not in STYLES:
-        raise ValueError(f"Unknown shake style {style!r}.")
+    recipe = clamp_recipe(recipe)
     frame_count = int(frame_count)
     fps = float(max(1.0, fps))
     amount = float(np.clip(amount, 0.0, 3.0))
     pace = float(np.clip(pace, 0.1, 3.0))
-    pan_amount = float(np.clip(pan_amount, 0.0, 3.0))
-    tilt_amount = float(np.clip(tilt_amount, 0.0, 3.0))
-    roll_amount = float(np.clip(roll_amount, 0.0, 3.0))
-    zoom_amount = float(np.clip(zoom_amount, 0.0, 3.0))
-    drift_amount = float(np.clip(drift_amount, 0.0, 3.0))
-    tremor_amount = float(np.clip(tremor_amount, 0.0, 3.0))
-    jitter_amount = float(np.clip(jitter_amount, 0.0, 3.0))
-    randomness = float(np.clip(randomness, 0.0, 1.0))
     if frame_count < 0:
         raise ValueError("frame_count must be non-negative.")
 
-    style_def = STYLES[style]
     rng = np.random.default_rng(int(seed))
     zeros = np.zeros((frame_count,), dtype=np.float64)
 
     # RNG consumption order is compatibility-sensitive:
     # drift pan/tilt/roll/zoom, tremor pan/tilt/roll/zoom, jitter, walking step.
-    if style_def.drift_enabled and drift_amount > 0.0:
-        drift_pan = _modulated_noise(rng, frame_count, fps, style_def.drift_freq, pace, randomness)
-        drift_tilt = _modulated_noise(rng, frame_count, fps, style_def.drift_freq, pace, randomness)
-        drift_roll = _modulated_noise(rng, frame_count, fps, style_def.drift_freq, pace, randomness)
-        drift_zoom = _modulated_noise(rng, frame_count, fps, style_def.drift_freq, pace, randomness)
+    if recipe.drift_freq > 0.0:
+        drift_pan = _modulated_noise(rng, frame_count, fps, recipe.drift_freq, pace, recipe.randomness)
+        drift_tilt = _modulated_noise(rng, frame_count, fps, recipe.drift_freq, pace, recipe.randomness)
+        drift_roll = _modulated_noise(rng, frame_count, fps, recipe.drift_freq, pace, recipe.randomness)
+        drift_zoom = _modulated_noise(rng, frame_count, fps, recipe.drift_freq, pace, recipe.randomness)
     else:
         drift_pan = drift_tilt = drift_roll = drift_zoom = zeros
 
-    tremor_pan = _modulated_noise(rng, frame_count, fps, style_def.tremor_freq, pace, randomness)
-    tremor_tilt = _modulated_noise(rng, frame_count, fps, style_def.tremor_freq, pace, randomness)
-    tremor_roll = _modulated_noise(rng, frame_count, fps, style_def.tremor_freq, pace, randomness)
-    tremor_zoom = _modulated_noise(rng, frame_count, fps, style_def.tremor_freq, pace, randomness)
+    tremor_pan = _modulated_noise(rng, frame_count, fps, recipe.tremor_freq, pace, recipe.randomness)
+    tremor_tilt = _modulated_noise(rng, frame_count, fps, recipe.tremor_freq, pace, recipe.randomness)
+    tremor_roll = _modulated_noise(rng, frame_count, fps, recipe.tremor_freq, pace, recipe.randomness)
+    tremor_zoom = _modulated_noise(rng, frame_count, fps, recipe.tremor_freq, pace, recipe.randomness)
 
-    jitter_pan, jitter_tilt, jitter_roll = _jitter_events(rng, frame_count, fps, style_def.jitter_rate, pace)
-    if style_def.step_enabled:
-        step_pan, step_tilt, step_roll = _walking_step(rng, frame_count, fps, pace, randomness)
+    jitter_pan, jitter_tilt, jitter_roll = _jitter_events(rng, frame_count, fps, recipe.jitter_rate, pace)
+    if recipe.step > 0.0:
+        step_pan, step_tilt, step_roll = _walking_step(rng, frame_count, fps, pace, recipe.randomness)
     else:
         step_pan = step_tilt = step_roll = zeros
 
-    pan = (
-        drift_pan * style_def.pan_amp * drift_amount
-        + tremor_pan * style_def.pan_amp * style_def.tremor_ratio * tremor_amount
-        + jitter_pan * style_def.pan_amp * jitter_amount
-        + step_pan * style_def.pan_amp * 0.5
-    )
-    tilt = (
-        drift_tilt * style_def.tilt_amp * drift_amount
-        + tremor_tilt * style_def.tilt_amp * style_def.tremor_ratio * tremor_amount
-        + jitter_tilt * style_def.tilt_amp * jitter_amount
-        + step_tilt * style_def.tilt_amp
-    )
-    roll = (
-        drift_roll * style_def.roll_amp * drift_amount
-        + tremor_roll * style_def.roll_amp * style_def.tremor_ratio * tremor_amount
-        + jitter_roll * style_def.roll_amp * jitter_amount
-        + step_roll * style_def.roll_amp * 0.5
-    )
-    zoom = (
-        drift_zoom * style_def.zoom_amp * drift_amount
-        + tremor_zoom * style_def.zoom_amp * style_def.tremor_ratio * tremor_amount
-    )
+    pan = drift_pan * recipe.pan + tremor_pan * recipe.pan * recipe.tremor + jitter_pan * recipe.pan + step_pan * recipe.step * 0.5
+    tilt = drift_tilt * recipe.tilt + tremor_tilt * recipe.tilt * recipe.tremor + jitter_tilt * recipe.tilt + step_tilt * recipe.step
+    roll = drift_roll * recipe.roll + tremor_roll * recipe.roll * recipe.tremor + jitter_roll * recipe.roll + step_roll * recipe.step * 0.5
+    zoom = drift_zoom * recipe.zoom + tremor_zoom * recipe.zoom * recipe.tremor
 
     return ShakeComponents(
-        pan_deg=_zero_start(pan * pan_amount * amount),
-        tilt_deg=_zero_start(tilt * tilt_amount * amount),
-        roll_deg=_zero_start(roll * roll_amount * amount),
-        zoom_log=_zero_start(zoom * zoom_amount * amount),
+        pan_deg=_zero_start(pan * amount),
+        tilt_deg=_zero_start(tilt * amount),
+        roll_deg=_zero_start(roll * amount),
+        zoom_log=_zero_start(zoom * amount),
     )
 
 
@@ -279,47 +282,34 @@ def _matrix(
 
 def generate_shake_motion_meta(
     *,
+    recipe: ShakeRecipe,
     frame_count: int,
     width: int,
     height: int,
     fps: float,
-    style: str,
     amount: float,
     pace: float,
     seed: int,
-    pan_amount: float = 1.0,
-    tilt_amount: float = 1.0,
-    roll_amount: float = 1.0,
-    zoom_amount: float = 1.0,
-    drift_amount: float = 1.0,
-    tremor_amount: float = 1.0,
-    jitter_amount: float = 1.0,
-    randomness: float = 0.3,
-    virtual_fov: float = 60.0,
+    node: str = "shake_generator",
+    style: str = "manual",
 ) -> dict:
+    recipe = clamp_recipe(recipe)
     frame_count = int(frame_count)
     width = int(width)
     height = int(height)
     fps = float(max(1.0, fps))
-    virtual_fov = float(np.clip(virtual_fov, 10.0, 120.0))
     if frame_count < 0 or width <= 0 or height <= 0:
         raise ValueError("frame_count must be non-negative and width/height must be positive.")
 
+    amount = float(np.clip(amount, 0.0, 3.0))
+    pace = float(np.clip(pace, 0.1, 3.0))
     components = generate_shake_components(
+        recipe=recipe,
         frame_count=frame_count,
         fps=fps,
-        style=style,
         amount=amount,
         pace=pace,
         seed=seed,
-        pan_amount=pan_amount,
-        tilt_amount=tilt_amount,
-        roll_amount=roll_amount,
-        zoom_amount=zoom_amount,
-        drift_amount=drift_amount,
-        tremor_amount=tremor_amount,
-        jitter_amount=jitter_amount,
-        randomness=randomness,
     )
 
     matrices = [
@@ -330,7 +320,7 @@ def generate_shake_motion_meta(
             components.tilt_deg[idx],
             components.roll_deg[idx],
             components.zoom_log[idx],
-            virtual_fov,
+            recipe.virtual_fov,
         )
         for idx in range(frame_count)
     ]
@@ -343,18 +333,11 @@ def generate_shake_motion_meta(
         output_size=(width, height),
         matrices=matrices,
         generator={
+            "node": node,
             "style": style,
-            "amount": float(np.clip(amount, 0.0, 3.0)),
-            "pace": float(np.clip(pace, 0.1, 3.0)),
+            "amount": amount,
+            "pace": pace,
             "seed": int(seed),
-            "pan_amount": float(np.clip(pan_amount, 0.0, 3.0)),
-            "tilt_amount": float(np.clip(tilt_amount, 0.0, 3.0)),
-            "roll_amount": float(np.clip(roll_amount, 0.0, 3.0)),
-            "zoom_amount": float(np.clip(zoom_amount, 0.0, 3.0)),
-            "drift_amount": float(np.clip(drift_amount, 0.0, 3.0)),
-            "tremor_amount": float(np.clip(tremor_amount, 0.0, 3.0)),
-            "jitter_amount": float(np.clip(jitter_amount, 0.0, 3.0)),
-            "randomness": float(np.clip(randomness, 0.0, 1.0)),
-            "virtual_fov": virtual_fov,
+            "recipe": recipe_to_dict(recipe),
         },
     )

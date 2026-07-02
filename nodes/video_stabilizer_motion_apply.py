@@ -67,7 +67,6 @@ class VideoStabilizerMotionApply(io.ComfyNode):
                 min=3,
                 max=33,
                 display_name="Motion Blur Samples",
-                advanced=True,
             ),
         ]
         schema.outputs = [

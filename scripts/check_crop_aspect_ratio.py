@@ -120,6 +120,47 @@ def check_node_crop(
         )
 
 
+def check_motion_apply_replays_stabilizer(
+    node_module: Any,
+    frames: list[np.ndarray],
+    framing_mode: str,
+    transform_mode: str,
+) -> None:
+    from nodes.motion_apply import apply_motion
+
+    context = node_module._normalize_video_input(frames)
+    result = node_module._stabilize_frames(
+        context,
+        framing_mode,
+        transform_mode,
+        False,
+        1.0,
+        0.5,
+        0.6,
+        (127, 127, 127),
+        24.0,
+    )
+    replay = apply_motion(
+        node_module._normalize_video_input(frames),
+        result.meta,
+        (127, 127, 127),
+        framing_mode="pad",
+        interpolation="bilinear",
+    )
+    direct_frames = np.asarray(result.frames, dtype=np.float32)
+    if replay.frames.shape != direct_frames.shape:
+        raise AssertionError(
+            f"{node_module.__name__} {framing_mode} replay shape {replay.frames.shape} != {direct_frames.shape}"
+        )
+    if not np.array_equal(replay.frames, direct_frames):
+        max_diff = float(np.max(np.abs(replay.frames - direct_frames)))
+        raise AssertionError(f"{node_module.__name__} {framing_mode} replay frame drift: max_diff={max_diff:.9f}")
+    direct_masks = np.asarray(result.masks, dtype=np.float32)
+    if not np.array_equal(replay.masks, direct_masks):
+        max_diff = float(np.max(np.abs(replay.masks - direct_masks)))
+        raise AssertionError(f"{node_module.__name__} {framing_mode} replay mask drift: max_diff={max_diff:.9f}")
+
+
 def main() -> int:
     width, height = 121, 73
     deltas = [
@@ -198,6 +239,8 @@ def main() -> int:
         for transform_mode in ("translation", "similarity"):
             for keep_fov in (0.0, 0.6):
                 check_node_crop(module, frames, width, height, transform_mode, keep_fov)
+        check_motion_apply_replays_stabilizer(module, frames, "expand", "similarity")
+        check_motion_apply_replays_stabilizer(module, frames, "crop_and_pad", "similarity")
 
     print("Crop aspect-ratio and no-padding checks passed for helper, Classic, and Flow.")
     return 0

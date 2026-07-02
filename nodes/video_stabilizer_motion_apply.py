@@ -67,8 +67,10 @@ class VideoStabilizerMotionApply(io.ComfyNode):
                 default=9,
                 min=3,
                 max=33,
+                step=1,
                 display_name="Blur Quality",
                 tooltip="Controls how many shutter samples are averaged per frame. Higher is smoother and slower.",
+                display_mode=io.NumberDisplay.slider,
             ),
         ]
         schema.outputs = [

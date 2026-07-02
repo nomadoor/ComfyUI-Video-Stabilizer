@@ -51,6 +51,24 @@ class VideoStabilizerMotionApply(io.ComfyNode):
                 display_name="Padding Color",
                 tooltip="HEX padding color used where warping exposes empty pixels.",
             ),
+            io.Float.Input(
+                "motion_blur",
+                default=0.0,
+                min=0.0,
+                max=1.0,
+                step=0.05,
+                display_name="Motion Blur",
+                tooltip="Shutter fraction for matrix-sampled motion blur. 0 disables blur.",
+                display_mode=io.NumberDisplay.slider,
+            ),
+            io.Int.Input(
+                "motion_blur_samples",
+                default=9,
+                min=3,
+                max=33,
+                display_name="Motion Blur Samples",
+                advanced=True,
+            ),
         ]
         schema.outputs = [
             io.Image.Output("frames", display_name="Frames"),
@@ -67,6 +85,8 @@ class VideoStabilizerMotionApply(io.ComfyNode):
         framing_mode: str,
         interpolation: str,
         padding_color: str,
+        motion_blur: float,
+        motion_blur_samples: int,
     ) -> io.NodeOutput:
         context = _normalize_video_input(frames)
         padding_rgb = _parse_padding_color(padding_color)
@@ -76,6 +96,8 @@ class VideoStabilizerMotionApply(io.ComfyNode):
             padding_rgb,
             framing_mode=framing_mode,  # type: ignore[arg-type]
             interpolation=interpolation,  # type: ignore[arg-type]
+            motion_blur=motion_blur,
+            motion_blur_samples=motion_blur_samples,
         )
         video_payload = _reconstruct_video(result.frames, context)
         mask_payload = _convert_masks_for_output(result.masks)

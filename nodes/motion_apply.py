@@ -91,6 +91,82 @@ def _warp_with_matrices(
     return frames_out, masks_out
 
 
+def _blurred_matrix_samples(matrices: list[np.ndarray], idx: int, motion_blur: float, sample_count: int) -> list[np.ndarray]:
+    if len(matrices) <= 1:
+        return [matrices[idx]]
+    base = np.asarray(matrices[idx], dtype=np.float64)
+    if idx < len(matrices) - 1:
+        delta = np.asarray(matrices[idx + 1], dtype=np.float64) - base
+    else:
+        delta = base - np.asarray(matrices[idx - 1], dtype=np.float64)
+    ts = np.linspace(0.0, float(motion_blur), int(sample_count), dtype=np.float64)
+    return [base + delta * t for t in ts]
+
+
+def _warp_with_motion_blur(
+    context: VideoContext,
+    matrices: list[np.ndarray],
+    output_size: Tuple[int, int],
+    interpolation_flag: int,
+    padding_rgb: Tuple[int, int, int],
+    motion_blur: float,
+    motion_blur_samples: int,
+    *,
+    masks_zero: bool = False,
+) -> tuple[np.ndarray, np.ndarray]:
+    if motion_blur <= 0.0 or motion_blur_samples <= 1:
+        return _warp_with_matrices(
+            context,
+            matrices,
+            output_size,
+            interpolation_flag,
+            padding_rgb,
+            masks_zero=masks_zero,
+        )
+
+    out_w, out_h = output_size
+    frame_count = len(matrices)
+    frames_out = np.empty((frame_count, out_h, out_w, 3), dtype=np.float32)
+    masks_out = np.zeros((frame_count, out_h, out_w, 1), dtype=np.float32)
+    border_value = _frame_border_value(context, padding_rgb)
+    ones = np.ones((context.height, context.width), dtype=np.float32)
+    sample_count = int(np.clip(motion_blur_samples, 3, 33))
+
+    for idx in range(frame_count):
+        frame_accum = np.zeros((out_h, out_w, 3), dtype=np.float32)
+        coverage_accum = np.zeros((out_h, out_w), dtype=np.float32)
+        for matrix in _blurred_matrix_samples(matrices, idx, motion_blur, sample_count):
+            matrix32 = np.asarray(matrix, dtype=np.float32)
+            warped = cv2.warpPerspective(
+                context.frames[idx],
+                matrix32,
+                output_size,
+                flags=interpolation_flag,
+                borderMode=cv2.BORDER_CONSTANT,
+                borderValue=border_value,
+            )
+            frame_accum += _ensure_rgb(warped.astype(np.float32))
+            if not masks_zero:
+                coverage = cv2.warpPerspective(
+                    ones,
+                    matrix32,
+                    output_size,
+                    flags=cv2.INTER_NEAREST,
+                    borderMode=cv2.BORDER_CONSTANT,
+                    borderValue=0.0,
+                )
+                coverage_accum += (coverage > 0.5).astype(np.float32)
+
+        frames_out[idx] = frame_accum / float(sample_count)
+        if not masks_zero:
+            mean_coverage = coverage_accum / float(sample_count)
+            mask = 1.0 - mean_coverage
+            mask[mask < 1e-3] = 0.0
+            masks_out[idx, ..., 0] = mask
+
+    return frames_out, masks_out
+
+
 def _common_valid_mask(
     input_size: Tuple[int, int],
     output_size: Tuple[int, int],
@@ -178,6 +254,8 @@ def apply_motion(
     *,
     framing_mode: ApplyFramingMode = "pad",
     interpolation: ApplyInterpolation = "bilinear",
+    motion_blur: float = 0.0,
+    motion_blur_samples: int = 9,
 ) -> MotionApplyResult:
     motion = resolve_motion_meta(meta)
     _validate_context(context, motion)
@@ -187,26 +265,63 @@ def apply_motion(
     interp_flag = _interpolation_flag(interpolation)
     result_meta = dict(meta)
     effective_framing = framing_mode
+    motion_blur = float(np.clip(motion_blur, 0.0, 1.0))
+    motion_blur_samples = int(np.clip(motion_blur_samples, 3, 33))
+    warp_fn = _warp_with_matrices if motion_blur <= 0.0 else _warp_with_motion_blur
 
     if framing_mode == "pad":
-        frames, masks = _warp_with_matrices(context, matrices, output_size, interp_flag, padding_rgb)
+        if motion_blur <= 0.0:
+            frames, masks = warp_fn(context, matrices, output_size, interp_flag, padding_rgb)
+        else:
+            frames, masks = warp_fn(
+                context,
+                matrices,
+                output_size,
+                interp_flag,
+                padding_rgb,
+                motion_blur,
+                motion_blur_samples,
+            )
     elif framing_mode == "crop":
         common = _common_valid_mask(motion.input_size, output_size, matrices)
         crop_matrix = _center_crop_matrix_from_common(common, output_size)
         if crop_matrix is None:
-            frames, masks = _warp_with_matrices(context, matrices, output_size, interp_flag, padding_rgb)
+            if motion_blur <= 0.0:
+                frames, masks = warp_fn(context, matrices, output_size, interp_flag, padding_rgb)
+            else:
+                frames, masks = warp_fn(
+                    context,
+                    matrices,
+                    output_size,
+                    interp_flag,
+                    padding_rgb,
+                    motion_blur,
+                    motion_blur_samples,
+                )
             result_meta["framing_fallback"] = "pad"
             effective_framing = "pad"
         else:
             cropped_matrices = [crop_matrix @ matrix for matrix in matrices]
-            frames, masks = _warp_with_matrices(
-                context,
-                cropped_matrices,
-                output_size,
-                interp_flag,
-                padding_rgb,
-                masks_zero=True,
-            )
+            if motion_blur <= 0.0:
+                frames, masks = warp_fn(
+                    context,
+                    cropped_matrices,
+                    output_size,
+                    interp_flag,
+                    padding_rgb,
+                    masks_zero=True,
+                )
+            else:
+                frames, masks = warp_fn(
+                    context,
+                    cropped_matrices,
+                    output_size,
+                    interp_flag,
+                    padding_rgb,
+                    motion_blur,
+                    motion_blur_samples,
+                    masks_zero=True,
+                )
     else:
         raise ValueError(f"Unsupported framing_mode {framing_mode!r}; expected 'pad' or 'crop'.")
 
@@ -215,6 +330,8 @@ def apply_motion(
         "output_size": [int(output_size[0]), int(output_size[1])],
         "framing_mode": effective_framing,
         "interpolation": interpolation,
+        "motion_blur": motion_blur,
+        "motion_blur_samples": motion_blur_samples,
         "source": motion.source,
     }
     return MotionApplyResult(frames, masks, result_meta)

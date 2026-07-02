@@ -724,7 +724,7 @@ class VideoStabilizerFlow(io.ComfyNode):
         schema.outputs = [
             io.Image.Output("frames_stabilized", display_name="Stabilized Frames"),
             io.Mask.Output("padding_mask", display_name="Padding Mask"),
-            JSONType.Output("motion_meta", display_name="Motion Meta"),
+            JSONType.Output("meta", display_name="Motion Meta"),
         ]
         return schema
 

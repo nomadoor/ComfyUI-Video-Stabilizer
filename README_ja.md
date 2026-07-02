@@ -90,7 +90,7 @@ Motion Apply:
 | --- | --- |
 | `frames_stabilized` | 補正済みフレーム。 |
 | `padding_mask` | padding / 欠損領域の mask。 |
-| `motion_meta` | 推定 motion、実際に適用した補正行列、Motion Apply 用の `motion_meta` block を含む JSON 診断情報。 |
+| `meta` | 推定 motion、実際に適用した補正行列、Motion Apply 用の `motion_meta` block を含む JSON 診断情報。 |
 
 ## Inverse stabilization
 

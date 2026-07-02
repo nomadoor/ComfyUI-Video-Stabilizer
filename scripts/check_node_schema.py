@@ -23,7 +23,7 @@ EXPECTED_NODES = {
             "keep_fov",
             "padding_color",
         ],
-        "outputs": ["frames_stabilized", "padding_mask", "motion_meta"],
+        "outputs": ["frames_stabilized", "padding_mask", "meta"],
     },
     "nodes/video_stabilizer_flow.py": {
         "node_id": "video_stabilizer_flow",
@@ -39,7 +39,7 @@ EXPECTED_NODES = {
             "keep_fov",
             "padding_color",
         ],
-        "outputs": ["frames_stabilized", "padding_mask", "motion_meta"],
+        "outputs": ["frames_stabilized", "padding_mask", "meta"],
     },
     "nodes/video_stabilizer_inverse.py": {
         "node_id": "video_stabilizer_inverse",

@@ -90,7 +90,7 @@ Motion Apply:
 | --- | --- |
 | `frames_stabilized` | Stabilized video frames. |
 | `padding_mask` | Mask of padded / missing regions. |
-| `motion_meta` | JSON diagnostics, including estimated motion, applied stabilization matrices, and the `motion_meta` block used by Motion Apply. |
+| `meta` | JSON diagnostics, including estimated motion, applied stabilization matrices, and the `motion_meta` block used by Motion Apply. |
 
 ## Inverse Stabilization
 

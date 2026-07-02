@@ -32,6 +32,8 @@ Inputs:
 - `framing_mode: pad | crop`
 - `interpolation: bilinear | bicubic`
 - `padding_color`
+- `motion_blur: 0.0..1.0`
+- `motion_blur_samples: 3..33` advanced
 
 Outputs:
 
@@ -46,6 +48,9 @@ Behavior:
 - `crop` finds a shared valid region, applies an aspect-preserving center crop, and emits an all-zero mask.
 - If `crop` cannot find a usable shared region without more than 4x scale, fall back to `pad` and record `framing_fallback: pad`.
 - Legacy `stabilization_warp` metadata resolves to `motion_meta` by inverting `applied_matrix`, so Motion Apply with `pad` and `bilinear` matches the deprecated Inverse behavior.
+- `motion_blur=0.0` uses the same path as unblurred apply.
+- `motion_blur>0.0` linearly interpolates adjacent frame matrices, warps multiple shutter samples, averages frames, and emits a soft padding mask based on mean coverage.
+- The deprecated Inverse wrapper always calls Motion Apply with blur disabled.
 
 ## Compatibility
 

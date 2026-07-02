@@ -23,8 +23,8 @@ https://github.com/user-attachments/assets/7da060c1-d775-47b7-91e6-f7a2ce147389
 | --- | --- |
 | `Video Stabilizer Classic` | Lightweight general-purpose stabilization using feature tracking. |
 | `Video Stabilizer Flow` | Higher-accuracy stabilization using DIS optical flow. TV-L1 is optional when `cv2.optflow` is available. |
-| `Video Stabilizer Motion Apply` | Applies `motion_meta` JSON to frames with pad or crop framing. |
-| `Video Stabilizer Shake Generator` | Emits deterministic shake `motion_meta`; it does not alter or pass through frames. |
+| `Video Stabilizer Motion Apply` | Applies `motion_meta` JSON to frames with pad/crop framing and optional motion blur. |
+| `Video Stabilizer Shake Generator` | Emits deterministic shake `motion_meta`; `style` chooses motion character and `amount` controls strength. |
 | `Video Stabilizer Inverse` | Deprecated compatibility node for restoring removed camera shake. |
 
 Flow normally uses DIS optical flow. If unavailable, it automatically falls back through TV-L1, translation estimation, and identity.
@@ -59,6 +59,24 @@ Framing modes:
 | `crop` | Hides borders with an aspect-ratio-preserving zoom/crop, reducing FOV. |
 | `crop_and_pad` | Limits zoom and pads remaining empty regions. |
 | `expand` | Does not crop at all; expands the canvas as needed. |
+
+Shake Generator:
+
+| Parameter | Default | Notes |
+| --- | ---: | --- |
+| `style` | `handheld` | `tripod`, `handheld`, `walking`, `action`, or `vibration`. |
+| `amount` | `1.0` | Overall shake amplitude. |
+| `pace` | `1.0` | Overall shake speed. |
+| `seed` | `0` | Deterministic seed. |
+
+Motion Apply:
+
+| Parameter | Default | Notes |
+| --- | ---: | --- |
+| `framing_mode` | `pad` | `pad` or `crop`. |
+| `interpolation` | `bilinear` | `bilinear` or `bicubic`. |
+| `motion_blur` | `0.0` | Shutter fraction. `0.5` is roughly a 180-degree shutter. |
+| `motion_blur_samples` | `9` | Advanced quality control for blur sampling. |
 
 ## Outputs
 

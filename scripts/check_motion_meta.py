@@ -17,7 +17,7 @@ from nodes.motion_meta import (  # noqa: E402
     motion_meta_from_stabilization_warp,
     resolve_motion_meta,
 )
-from nodes.shake_noise import generate_shake_motion_meta  # noqa: E402
+from nodes.shake_noise import STYLES, generate_shake_components, generate_shake_motion_meta  # noqa: E402
 from nodes.stabilizer_utils import _build_stabilization_warp_meta, _normalize_video_input  # noqa: E402
 
 
@@ -33,6 +33,33 @@ def _frames(count: int, width: int = 32, height: int = 24) -> list[np.ndarray]:
     return frames
 
 
+def _translation_energy(block: dict) -> float:
+    matrices = [np.asarray(entry["matrix"], dtype=np.float64) for entry in block["per_frame"]]
+    translations = np.array([[matrix[0, 2], matrix[1, 2]] for matrix in matrices], dtype=np.float64)
+    return float(np.sqrt(np.mean(np.sum(translations * translations, axis=1))))
+
+
+def _high_frequency_energy(values: np.ndarray) -> float:
+    if values.size < 3:
+        return 0.0
+    second_diff = np.diff(values, n=2)
+    return float(np.sqrt(np.mean(second_diff * second_diff)))
+
+
+def _dominant_frequency(values: np.ndarray, fps: float) -> float:
+    centered = values - float(np.mean(values))
+    spectrum = np.abs(np.fft.rfft(centered))
+    freqs = np.fft.rfftfreq(values.size, d=1.0 / fps)
+    if spectrum.size <= 1:
+        return 0.0
+    spectrum[0] = 0.0
+    return float(freqs[int(np.argmax(spectrum))])
+
+
+def _rotation_degrees(matrix: np.ndarray) -> float:
+    return float(np.degrees(np.arctan2(matrix[1, 0], matrix[0, 0])))
+
+
 def main() -> int:
     matrices = [
         np.eye(3, dtype=np.float64),
@@ -45,7 +72,21 @@ def main() -> int:
         input_size=(64, 48),
         output_size=(64, 48),
         matrices=matrices,
-        generator={"preset": "handheld_subtle", "strength": 1.0, "speed": 1.0, "detail": 0.35, "seed": 0},
+        generator={
+            "style": "handheld",
+            "amount": 1.0,
+            "pace": 1.0,
+            "seed": 0,
+            "pan_amount": 1.0,
+            "tilt_amount": 1.0,
+            "roll_amount": 1.0,
+            "zoom_amount": 1.0,
+            "drift_amount": 1.0,
+            "tremor_amount": 1.0,
+            "jitter_amount": 1.0,
+            "randomness": 0.3,
+            "virtual_fov": 60.0,
+        },
     )
     resolved = resolve_motion_meta({"motion_meta": block})
     if resolved.frame_count != 2 or resolved.input_size != (64, 48) or resolved.output_size != (64, 48):
@@ -79,10 +120,9 @@ def main() -> int:
         width=64,
         height=48,
         fps=16.0,
-        preset="handheld_subtle",
-        strength=1.0,
-        speed=1.0,
-        detail=0.35,
+        style="handheld",
+        amount=1.0,
+        pace=1.0,
         seed=123,
     )
     shake_b = generate_shake_motion_meta(
@@ -90,10 +130,9 @@ def main() -> int:
         width=64,
         height=48,
         fps=16.0,
-        preset="handheld_subtle",
-        strength=1.0,
-        speed=1.0,
-        detail=0.35,
+        style="handheld",
+        amount=1.0,
+        pace=1.0,
         seed=123,
     )
     shake_c = generate_shake_motion_meta(
@@ -101,10 +140,9 @@ def main() -> int:
         width=64,
         height=48,
         fps=16.0,
-        preset="handheld_subtle",
-        strength=1.0,
-        speed=1.0,
-        detail=0.35,
+        style="handheld",
+        amount=1.0,
+        pace=1.0,
         seed=124,
     )
     if shake_a != shake_b:
@@ -113,18 +151,104 @@ def main() -> int:
         raise AssertionError("shake generation did not vary across seeds")
     if len(shake_a["per_frame"]) != 5 or shake_a["frame_count"] != 5:
         raise AssertionError("shake frame_count/per_frame length mismatch")
+    if not np.allclose(np.asarray(shake_a["per_frame"][0]["matrix"], dtype=np.float64), np.eye(3), atol=1e-9):
+        raise AssertionError("shake first frame is not identity")
 
     generate_shake_motion_meta(
         frame_count=4,
         width=64,
         height=48,
         fps=8.0,
-        preset="vibration",
-        strength=1.0,
-        speed=3.0,
-        detail=1.0,
+        style="vibration",
+        amount=1.0,
+        pace=3.0,
         seed=0,
     )
+
+    for style in STYLES:
+        block_for_style = generate_shake_motion_meta(
+            frame_count=32,
+            width=96,
+            height=54,
+            fps=16.0,
+            style=style,
+            amount=1.0,
+            pace=1.0,
+            seed=17,
+        )
+        first_matrix = np.asarray(block_for_style["per_frame"][0]["matrix"], dtype=np.float64)
+        if not np.allclose(first_matrix, np.eye(3), atol=1e-9):
+            raise AssertionError(f"{style} first frame is not identity")
+
+    handheld_components = generate_shake_components(
+        frame_count=128,
+        fps=16.0,
+        style="handheld",
+        amount=1.0,
+        pace=1.0,
+        seed=77,
+    )
+    vibration_components = generate_shake_components(
+        frame_count=128,
+        fps=16.0,
+        style="vibration",
+        amount=1.0,
+        pace=1.0,
+        seed=77,
+    )
+    walking_components = generate_shake_components(
+        frame_count=128,
+        fps=16.0,
+        style="walking",
+        amount=1.0,
+        pace=1.0,
+        seed=77,
+    )
+    tripod_block = generate_shake_motion_meta(
+        frame_count=128,
+        width=128,
+        height=72,
+        fps=16.0,
+        style="tripod",
+        amount=1.0,
+        pace=1.0,
+        seed=77,
+    )
+    handheld_block = generate_shake_motion_meta(
+        frame_count=128,
+        width=128,
+        height=72,
+        fps=16.0,
+        style="handheld",
+        amount=1.0,
+        pace=1.0,
+        seed=77,
+    )
+    if _high_frequency_energy(vibration_components.pan_deg) <= _high_frequency_energy(handheld_components.pan_deg):
+        raise AssertionError("vibration should have more high-frequency pan energy than handheld")
+    walking_peak = _dominant_frequency(walking_components.tilt_deg, fps=16.0)
+    if abs(walking_peak - 1.9) > 0.35:
+        raise AssertionError(f"walking tilt peak should be near step frequency, got {walking_peak:.3f} Hz")
+    if _translation_energy(tripod_block) * 10.0 >= _translation_energy(handheld_block):
+        raise AssertionError("tripod total translation amplitude should be at least one order below handheld")
+
+    no_roll = generate_shake_motion_meta(
+        frame_count=32,
+        width=96,
+        height=54,
+        fps=16.0,
+        style="action",
+        amount=1.0,
+        pace=1.0,
+        seed=5,
+        roll_amount=0.0,
+    )
+    rotations = [
+        abs(_rotation_degrees(np.asarray(entry["matrix"], dtype=np.float64)))
+        for entry in no_roll["per_frame"]
+    ]
+    if max(rotations) > 1e-9:
+        raise AssertionError("roll_amount=0 should zero generated roll")
 
     frames = _frames(3)
     identity_meta = {
@@ -135,14 +259,79 @@ def main() -> int:
             input_size=(32, 24),
             output_size=(32, 24),
             matrices=[np.eye(3, dtype=np.float64) for _ in frames],
-            generator={"preset": "handheld_subtle", "strength": 0.0, "speed": 1.0, "detail": 0.35, "seed": 0},
+            generator={
+                "style": "handheld",
+                "amount": 0.0,
+                "pace": 1.0,
+                "seed": 0,
+                "pan_amount": 1.0,
+                "tilt_amount": 1.0,
+                "roll_amount": 1.0,
+                "zoom_amount": 1.0,
+                "drift_amount": 1.0,
+                "tremor_amount": 1.0,
+                "jitter_amount": 1.0,
+                "randomness": 0.3,
+                "virtual_fov": 60.0,
+            },
         )
     }
-    identity_result = apply_motion(_normalize_video_input(frames), identity_meta, (127, 127, 127))
+    baseline_result = apply_motion(_normalize_video_input(frames), identity_meta, (127, 127, 127))
+    identity_result = apply_motion(_normalize_video_input(frames), identity_meta, (127, 127, 127), motion_blur=0.0)
     if not np.allclose(identity_result.frames, np.stack(frames, axis=0), atol=1e-6):
         raise AssertionError("identity motion apply changed frames")
     if float(np.max(identity_result.masks)) != 0.0:
         raise AssertionError("identity motion apply produced padding")
+    if not np.array_equal(identity_result.frames, baseline_result.frames) or not np.array_equal(
+        identity_result.masks,
+        baseline_result.masks,
+    ):
+        raise AssertionError("motion_blur=0 should use the exact baseline path")
+
+    blur_matrix = np.array([[1.0, 0.0, 2.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
+    blur_meta = {
+        "motion_meta": build_motion_meta_v2(
+            source="generated_shake",
+            frame_count=3,
+            fps=16.0,
+            input_size=(32, 24),
+            output_size=(32, 24),
+            matrices=[np.eye(3, dtype=np.float64), blur_matrix, blur_matrix @ blur_matrix],
+            generator={
+                "style": "handheld",
+                "amount": 1.0,
+                "pace": 1.0,
+                "seed": 0,
+                "pan_amount": 1.0,
+                "tilt_amount": 1.0,
+                "roll_amount": 1.0,
+                "zoom_amount": 1.0,
+                "drift_amount": 1.0,
+                "tremor_amount": 1.0,
+                "jitter_amount": 1.0,
+                "randomness": 0.3,
+                "virtual_fov": 60.0,
+            },
+        )
+    }
+    blur_a = apply_motion(
+        _normalize_video_input(frames),
+        blur_meta,
+        (127, 127, 127),
+        motion_blur=0.5,
+        motion_blur_samples=7,
+    )
+    blur_b = apply_motion(
+        _normalize_video_input(frames),
+        blur_meta,
+        (127, 127, 127),
+        motion_blur=0.5,
+        motion_blur_samples=7,
+    )
+    if not np.array_equal(blur_a.frames, blur_b.frames) or not np.array_equal(blur_a.masks, blur_b.masks):
+        raise AssertionError("motion blur apply should be deterministic")
+    if blur_a.meta.get("motion_apply", {}).get("motion_blur") != 0.5:
+        raise AssertionError("motion blur metadata missing")
 
     shift = np.array([[1.0, 0.0, 60.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
     fallback_meta = {
@@ -153,7 +342,21 @@ def main() -> int:
             input_size=(32, 24),
             output_size=(32, 24),
             matrices=[shift for _ in frames],
-            generator={"preset": "handheld_subtle", "strength": 3.0, "speed": 1.0, "detail": 0.35, "seed": 0},
+            generator={
+                "style": "handheld",
+                "amount": 3.0,
+                "pace": 1.0,
+                "seed": 0,
+                "pan_amount": 1.0,
+                "tilt_amount": 1.0,
+                "roll_amount": 1.0,
+                "zoom_amount": 1.0,
+                "drift_amount": 1.0,
+                "tremor_amount": 1.0,
+                "jitter_amount": 1.0,
+                "randomness": 0.3,
+                "virtual_fov": 60.0,
+            },
         )
     }
     crop_result = apply_motion(

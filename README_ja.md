@@ -23,8 +23,8 @@ https://github.com/user-attachments/assets/7da060c1-d775-47b7-91e6-f7a2ce147389
 | --- | --- |
 | `Video Stabilizer Classic` | 特徴点トラッキングによる軽量な汎用 stabilizer。 |
 | `Video Stabilizer Flow` | DIS optical flow による高精度 stabilizer。`cv2.optflow` が利用可能な場合のみ TV-L1 も使えます。 |
-| `Video Stabilizer Motion Apply` | `motion_meta` JSON を pad / crop framing でフレームへ適用します。 |
-| `Video Stabilizer Shake Generator` | 決定的な shake `motion_meta` を出力します。フレームは加工も passthrough もしません。 |
+| `Video Stabilizer Motion Apply` | `motion_meta` JSON を pad / crop framing と optional motion blur でフレームへ適用します。 |
+| `Video Stabilizer Shake Generator` | 決定的な shake `motion_meta` を出力します。`style` は揺れの種類、`amount` は強さです。 |
 | `Video Stabilizer Inverse` | 元の手ブレを戻すための deprecated 互換ノード。 |
 
 Flow は通常 DIS optical flow を使います。使えない場合は TV-L1、平行移動推定、identity の順に自動で fallback します。
@@ -59,6 +59,24 @@ Framing mode:
 | `crop` | アスペクト比を保ったズーム/クロップで縁を隠します。画角は狭くなります。 |
 | `crop_and_pad` | ズームを抑え、不足分を padding します。 |
 | `expand` | 全く crop せず、必要な分だけキャンバスを拡張します。 |
+
+Shake Generator:
+
+| Parameter | Default | 説明 |
+| --- | ---: | --- |
+| `style` | `handheld` | `tripod`, `handheld`, `walking`, `action`, `vibration` から揺れの種類を選びます。 |
+| `amount` | `1.0` | 揺れ全体の強さ。 |
+| `pace` | `1.0` | 揺れ全体の速さ。 |
+| `seed` | `0` | 決定的生成用の seed。 |
+
+Motion Apply:
+
+| Parameter | Default | 説明 |
+| --- | ---: | --- |
+| `framing_mode` | `pad` | `pad` または `crop`。 |
+| `interpolation` | `bilinear` | `bilinear` または `bicubic`。 |
+| `motion_blur` | `0.0` | シャッター開角割合。`0.5` がだいたい 180度シャッター相当です。 |
+| `motion_blur_samples` | `9` | blur sampling 品質の advanced control。 |
 
 ## 出力
 

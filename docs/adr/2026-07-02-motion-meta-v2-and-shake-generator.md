@@ -16,6 +16,6 @@ The producer/consumer split lets estimated motion and generated motion use the s
 
 The socket type remains `io.Custom("JSON")`. Existing workflows keep their node ids and output shapes. Inverse keeps its public inputs/outputs while delegating to Motion Apply.
 
-## Rejected or Deferred
+## Motion Blur
 
-Motion blur is deferred because v1 only needs deterministic geometric application. Advanced shake controls such as separate translation scale or rotation scale are deferred to keep the public node small until real workflow feedback exists.
+Motion blur belongs in Motion Apply because it is a pixel-application concern, not a metadata-generation concern. When disabled, Motion Apply keeps the unblurred path. When enabled, it samples interpolated matrices across the shutter fraction and averages the warped frames.

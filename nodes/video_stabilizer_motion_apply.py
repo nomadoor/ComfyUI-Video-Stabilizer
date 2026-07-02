@@ -18,6 +18,12 @@ from .stabilizer_utils import (
 )
 
 JSONType = io.Custom("JSON")
+BLUR_QUALITY_SAMPLES = {
+    "Draft": 5,
+    "Standard": 9,
+    "High": 17,
+    "Ultra": 33,
+}
 
 
 class VideoStabilizerMotionApply(io.ComfyNode):
@@ -62,15 +68,12 @@ class VideoStabilizerMotionApply(io.ComfyNode):
                 tooltip="Shutter fraction for matrix-sampled motion blur. 0 disables blur.",
                 display_mode=io.NumberDisplay.slider,
             ),
-            io.Int.Input(
-                "motion_blur_samples",
-                default=9,
-                min=3,
-                max=33,
-                step=1,
+            io.Combo.Input(
+                "motion_blur_quality",
+                options=list(BLUR_QUALITY_SAMPLES.keys()),
+                default="Standard",
                 display_name="Blur Quality",
-                tooltip="Controls how many shutter samples are averaged per frame. Higher is smoother and slower.",
-                display_mode=io.NumberDisplay.slider,
+                tooltip="Draft is faster. High and Ultra average more shutter samples for smoother blur.",
             ),
         ]
         schema.outputs = [
@@ -89,10 +92,12 @@ class VideoStabilizerMotionApply(io.ComfyNode):
         interpolation: str,
         padding_color: str,
         motion_blur: float,
-        motion_blur_samples: int,
+        motion_blur_quality: str,
     ) -> io.NodeOutput:
         context = _normalize_video_input(frames)
         padding_rgb = _parse_padding_color(padding_color)
+        resolved_quality = motion_blur_quality if motion_blur_quality in BLUR_QUALITY_SAMPLES else "Standard"
+        motion_blur_samples = BLUR_QUALITY_SAMPLES[resolved_quality]
         frame_count = len(context.frames)
         sample_count = int(max(3, min(33, motion_blur_samples))) if motion_blur > 0.0 else 1
         progress_total = frame_count * sample_count
@@ -117,6 +122,7 @@ class VideoStabilizerMotionApply(io.ComfyNode):
             motion_blur_samples=motion_blur_samples,
             progress_callback=update_progress,
         )
+        result.meta.setdefault("motion_apply", {})["motion_blur_quality"] = resolved_quality
         pbar.update_absolute(progress_total, progress_total)
         video_payload = _reconstruct_video(result.frames, context)
         mask_payload = _convert_masks_for_output(result.masks)

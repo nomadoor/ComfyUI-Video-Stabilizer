@@ -105,7 +105,7 @@ generate_shake_motion_meta(recipe: ShakeRecipe, frame_count, width, height, fps,
 
 ## 3. advanced=True の全廃
 
-- repo内の `advanced=True` をすべて削除する(Shake Generator の乗数はノードごと消えるが、**Motion Apply の `motion_blur_samples` も通常widgetに戻す**)。
+- repo内の `advanced=True` をすべて削除する(Shake Generator の乗数はノードごと消えるが、**Motion Apply の motion blur quality も通常widgetに戻す**)。
 - 方針として「レガシーフロントエンドで挙動・見え方が変わるUI機構には依存しない」をADRに明記。
 
 ## 4. 登録

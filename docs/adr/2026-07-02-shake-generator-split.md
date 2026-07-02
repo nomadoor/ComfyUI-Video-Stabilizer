@@ -9,7 +9,7 @@ Split shake generation into two nodes:
 - `Video Stabilizer Shake Generator`: simple style-based controls.
 - `Video Stabilizer Shake Generator Manual`: explicit absolute recipe controls.
 
-Remove reliance on `advanced=True` for UX correctness. Motion Apply's `motion_blur_samples` is also a normal widget.
+Remove reliance on `advanced=True` for UX correctness. Motion Apply's motion blur quality is also a normal widget.
 
 ## Rationale
 

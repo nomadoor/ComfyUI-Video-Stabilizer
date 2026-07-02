@@ -33,7 +33,7 @@ Inputs:
 - `interpolation: bilinear | bicubic`
 - `padding_color`
 - `motion_blur: 0.0..1.0`
-- `motion_blur_samples: 3..33`, displayed as `Blur Quality`
+- `motion_blur_quality: Draft | Standard | High | Ultra`
 
 Outputs:
 
@@ -49,7 +49,7 @@ Behavior:
 - If `crop` cannot find a usable shared region without more than 4x scale, fall back to `pad` and record `framing_fallback: pad`.
 - Legacy `stabilization_warp` metadata resolves to `motion_meta` by inverting `applied_matrix`, so Motion Apply with `pad` and `bilinear` matches the deprecated Inverse behavior.
 - `motion_blur=0.0` uses the same path as unblurred apply.
-- `motion_blur>0.0` linearly interpolates adjacent frame matrices, warps multiple shutter samples, averages frames, and emits a soft padding mask based on mean coverage.
+- `motion_blur>0.0` linearly interpolates adjacent frame matrices, warps multiple shutter samples, averages frames, and emits a soft padding mask based on mean coverage. Blur Quality maps to shutter sample counts: Draft=5, Standard=9, High=17, Ultra=33.
 - Motion Apply reports progress during both crop-mask analysis and frame warping. With motion blur enabled, progress advances per shutter sample.
 - The deprecated Inverse wrapper always calls Motion Apply with blur disabled.
 

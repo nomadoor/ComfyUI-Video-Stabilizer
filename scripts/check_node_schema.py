@@ -58,7 +58,7 @@ EXPECTED_NODES = {
             "interpolation",
             "padding_color",
             "motion_blur",
-            "motion_blur_samples",
+            "motion_blur_quality",
         ],
         "outputs": ["frames", "padding_mask", "meta"],
     },

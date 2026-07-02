@@ -33,7 +33,7 @@ Inputs:
 - `interpolation: bilinear | bicubic`
 - `padding_color`
 - `motion_blur: 0.0..1.0`
-- `motion_blur_samples: 3..33`
+- `motion_blur_samples: 3..33`, displayed as `Blur Quality`
 
 Outputs:
 

@@ -325,6 +325,35 @@ def main() -> int:
         raise AssertionError("motion blur apply should be deterministic")
     if blur_a.meta.get("motion_apply", {}).get("motion_blur") != 0.5:
         raise AssertionError("motion blur metadata missing")
+    progress_ticks = 0
+
+    def tick() -> None:
+        nonlocal progress_ticks
+        progress_ticks += 1
+
+    apply_motion(
+        _normalize_video_input(frames),
+        blur_meta,
+        (127, 127, 127),
+        motion_blur=0.5,
+        motion_blur_samples=7,
+        progress_callback=tick,
+    )
+    if progress_ticks != len(frames) * 7:
+        raise AssertionError(f"motion blur progress tick count mismatch: {progress_ticks}")
+
+    progress_ticks = 0
+    apply_motion(
+        _normalize_video_input(frames),
+        blur_meta,
+        (127, 127, 127),
+        framing_mode="crop",
+        motion_blur=0.5,
+        motion_blur_samples=7,
+        progress_callback=tick,
+    )
+    if progress_ticks != len(frames) + len(frames) * 7:
+        raise AssertionError(f"crop motion blur progress tick count mismatch: {progress_ticks}")
 
     shift = np.array([[1.0, 0.0, 60.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
     fallback_meta = {

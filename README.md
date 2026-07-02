@@ -82,7 +82,7 @@ Motion Apply:
 | `framing_mode` | `pad` | `pad` or `crop`. |
 | `interpolation` | `bilinear` | `bilinear` or `bicubic`. |
 | `motion_blur` | `0.0` | Shutter fraction. `0.5` is roughly a 180-degree shutter. |
-| `motion_blur_samples` | `9` | Quality control for blur sampling. |
+| `motion_blur_samples` | `9` | Shutter samples per frame. Higher values are smoother and slower. |
 
 ## Outputs
 

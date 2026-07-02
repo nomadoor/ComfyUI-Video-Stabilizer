@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Literal, Tuple
+from typing import Any, Callable, Dict, Literal, Tuple
 
 import cv2
 import numpy as np
@@ -11,6 +11,7 @@ from .stabilizer_utils import VideoContext, _ensure_rgb
 
 ApplyFramingMode = Literal["pad", "crop"]
 ApplyInterpolation = Literal["bilinear", "bicubic"]
+ProgressCallback = Callable[[], None]
 
 
 @dataclass
@@ -54,6 +55,7 @@ def _warp_with_matrices(
     padding_rgb: Tuple[int, int, int],
     *,
     masks_zero: bool = False,
+    progress_callback: ProgressCallback | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     out_w, out_h = output_size
     frame_count = len(matrices)
@@ -74,6 +76,8 @@ def _warp_with_matrices(
         )
         frames_out[idx] = _ensure_rgb(warped.astype(np.float32))
         if masks_zero:
+            if progress_callback is not None:
+                progress_callback()
             continue
 
         content = cv2.warpPerspective(
@@ -87,6 +91,8 @@ def _warp_with_matrices(
         mask = 1.0 - (content > 0.5).astype(np.float32)
         mask[mask < 1e-3] = 0.0
         masks_out[idx, ..., 0] = mask
+        if progress_callback is not None:
+            progress_callback()
 
     return frames_out, masks_out
 
@@ -113,6 +119,7 @@ def _warp_with_motion_blur(
     motion_blur_samples: int,
     *,
     masks_zero: bool = False,
+    progress_callback: ProgressCallback | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     if motion_blur <= 0.0 or motion_blur_samples <= 1:
         return _warp_with_matrices(
@@ -122,6 +129,7 @@ def _warp_with_motion_blur(
             interpolation_flag,
             padding_rgb,
             masks_zero=masks_zero,
+            progress_callback=progress_callback,
         )
 
     out_w, out_h = output_size
@@ -156,6 +164,8 @@ def _warp_with_motion_blur(
                     borderValue=0.0,
                 )
                 coverage_accum += (coverage > 0.5).astype(np.float32)
+            if progress_callback is not None:
+                progress_callback()
 
         frames_out[idx] = frame_accum / float(sample_count)
         if not masks_zero:
@@ -171,6 +181,7 @@ def _common_valid_mask(
     input_size: Tuple[int, int],
     output_size: Tuple[int, int],
     matrices: list[np.ndarray],
+    progress_callback: ProgressCallback | None = None,
 ) -> np.ndarray:
     in_w, in_h = input_size
     out_w, out_h = output_size
@@ -186,6 +197,8 @@ def _common_valid_mask(
             borderValue=0.0,
         )
         common &= content > 0.5
+        if progress_callback is not None:
+            progress_callback()
     return common
 
 
@@ -256,6 +269,7 @@ def apply_motion(
     interpolation: ApplyInterpolation = "bilinear",
     motion_blur: float = 0.0,
     motion_blur_samples: int = 9,
+    progress_callback: ProgressCallback | None = None,
 ) -> MotionApplyResult:
     motion = resolve_motion_meta(meta)
     _validate_context(context, motion)
@@ -271,7 +285,14 @@ def apply_motion(
 
     if framing_mode == "pad":
         if motion_blur <= 0.0:
-            frames, masks = warp_fn(context, matrices, output_size, interp_flag, padding_rgb)
+            frames, masks = warp_fn(
+                context,
+                matrices,
+                output_size,
+                interp_flag,
+                padding_rgb,
+                progress_callback=progress_callback,
+            )
         else:
             frames, masks = warp_fn(
                 context,
@@ -281,13 +302,21 @@ def apply_motion(
                 padding_rgb,
                 motion_blur,
                 motion_blur_samples,
+                progress_callback=progress_callback,
             )
     elif framing_mode == "crop":
-        common = _common_valid_mask(motion.input_size, output_size, matrices)
+        common = _common_valid_mask(motion.input_size, output_size, matrices, progress_callback=progress_callback)
         crop_matrix = _center_crop_matrix_from_common(common, output_size)
         if crop_matrix is None:
             if motion_blur <= 0.0:
-                frames, masks = warp_fn(context, matrices, output_size, interp_flag, padding_rgb)
+                frames, masks = warp_fn(
+                    context,
+                    matrices,
+                    output_size,
+                    interp_flag,
+                    padding_rgb,
+                    progress_callback=progress_callback,
+                )
             else:
                 frames, masks = warp_fn(
                     context,
@@ -297,6 +326,7 @@ def apply_motion(
                     padding_rgb,
                     motion_blur,
                     motion_blur_samples,
+                    progress_callback=progress_callback,
                 )
             result_meta["framing_fallback"] = "pad"
             effective_framing = "pad"
@@ -310,6 +340,7 @@ def apply_motion(
                     interp_flag,
                     padding_rgb,
                     masks_zero=True,
+                    progress_callback=progress_callback,
                 )
             else:
                 frames, masks = warp_fn(
@@ -321,6 +352,7 @@ def apply_motion(
                     motion_blur,
                     motion_blur_samples,
                     masks_zero=True,
+                    progress_callback=progress_callback,
                 )
     else:
         raise ValueError(f"Unsupported framing_mode {framing_mode!r}; expected 'pad' or 'crop'.")

@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 from comfy_api.latest import ComfyExtension, io
+from comfy.utils import ProgressBar
 
 from .motion_apply import apply_motion
 from .stabilizer_utils import (
@@ -66,7 +67,8 @@ class VideoStabilizerMotionApply(io.ComfyNode):
                 default=9,
                 min=3,
                 max=33,
-                display_name="Motion Blur Samples",
+                display_name="Blur Samples",
+                tooltip="Number of shutter samples per frame. Higher values make blur smoother and slower.",
             ),
         ]
         schema.outputs = [
@@ -89,6 +91,20 @@ class VideoStabilizerMotionApply(io.ComfyNode):
     ) -> io.NodeOutput:
         context = _normalize_video_input(frames)
         padding_rgb = _parse_padding_color(padding_color)
+        frame_count = len(context.frames)
+        sample_count = int(max(3, min(33, motion_blur_samples))) if motion_blur > 0.0 else 1
+        progress_total = frame_count * sample_count
+        if framing_mode == "crop":
+            progress_total += frame_count
+        progress_total = max(progress_total, 1)
+        pbar = ProgressBar(max(progress_total, 1))
+        progress_done = 0
+
+        def update_progress() -> None:
+            nonlocal progress_done
+            progress_done += 1
+            pbar.update_absolute(min(progress_done, progress_total), progress_total)
+
         result = apply_motion(
             context,
             motion_meta,
@@ -97,7 +113,9 @@ class VideoStabilizerMotionApply(io.ComfyNode):
             interpolation=interpolation,  # type: ignore[arg-type]
             motion_blur=motion_blur,
             motion_blur_samples=motion_blur_samples,
+            progress_callback=update_progress,
         )
+        pbar.update_absolute(progress_total, progress_total)
         video_payload = _reconstruct_video(result.frames, context)
         mask_payload = _convert_masks_for_output(result.masks)
         return io.NodeOutput(video_payload, mask_payload, result.meta)

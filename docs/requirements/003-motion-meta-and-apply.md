@@ -33,7 +33,7 @@ Inputs:
 - `interpolation: bilinear | bicubic`
 - `padding_color`
 - `motion_blur: 0.0..1.0`
-- `motion_blur_samples: 3..33` advanced
+- `motion_blur_samples: 3..33`
 
 Outputs:
 
@@ -50,6 +50,7 @@ Behavior:
 - Legacy `stabilization_warp` metadata resolves to `motion_meta` by inverting `applied_matrix`, so Motion Apply with `pad` and `bilinear` matches the deprecated Inverse behavior.
 - `motion_blur=0.0` uses the same path as unblurred apply.
 - `motion_blur>0.0` linearly interpolates adjacent frame matrices, warps multiple shutter samples, averages frames, and emits a soft padding mask based on mean coverage.
+- Motion Apply reports progress during both crop-mask analysis and frame warping. With motion blur enabled, progress advances per shutter sample.
 - The deprecated Inverse wrapper always calls Motion Apply with blur disabled.
 
 ## Compatibility

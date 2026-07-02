@@ -82,7 +82,7 @@ Motion Apply:
 | `framing_mode` | `pad` | `pad` または `crop`。 |
 | `interpolation` | `bilinear` | `bilinear` または `bicubic`。 |
 | `motion_blur` | `0.0` | シャッター開角割合。`0.5` がだいたい 180度シャッター相当です。 |
-| `motion_blur_samples` | `9` | blur sampling 品質の control。 |
+| `motion_blur_samples` | `9` | 1フレームあたりのシャッターサンプル数。大きいほど滑らかで遅くなります。 |
 
 ## 出力
 

@@ -4,12 +4,13 @@
 
 CPU で扱いやすい動画手ぶれ補正、padding mask 出力、再利用できる motion metadata、元の動きへ戻す workflow のための ComfyUI custom node です。
 
-有効なノードは4種類です。
+ノードは6種類です。
 
 - **Classic**: OpenCV / NumPy による特徴点トラッキング
 - **Flow**: OpenCV DIS を標準で使う dense optical flow
 - **Motion Apply**: motion metadata をフレームへ適用
-- **Shake Generator**: フレームを加工せず、決定的な手持ち風 motion metadata を生成
+- **Shake Generator**: フレームを加工せず、style ベースの motion metadata を生成
+- **Shake Generator Manual**: 明示的な recipe 値から同種の motion metadata を生成
 
 https://github.com/user-attachments/assets/7da060c1-d775-47b7-91e6-f7a2ce147389
 
@@ -25,6 +26,7 @@ https://github.com/user-attachments/assets/7da060c1-d775-47b7-91e6-f7a2ce147389
 | `Video Stabilizer Flow` | DIS optical flow による高精度 stabilizer。`cv2.optflow` が利用可能な場合のみ TV-L1 も使えます。 |
 | `Video Stabilizer Motion Apply` | `motion_meta` JSON を pad / crop framing と optional motion blur でフレームへ適用します。 |
 | `Video Stabilizer Shake Generator` | 決定的な shake `motion_meta` を出力します。`style` は揺れの種類、`amount` は強さです。 |
+| `Video Stabilizer Shake Generator Manual` | pan / tilt / roll / zoom などの絶対値 recipe から shake `motion_meta` を出力します。 |
 | `Video Stabilizer Inverse` | 元の手ブレを戻すための deprecated 互換ノード。 |
 
 Flow は通常 DIS optical flow を使います。使えない場合は TV-L1、平行移動推定、identity の順に自動で fallback します。
@@ -36,6 +38,8 @@ Flow は通常 DIS optical flow を使います。使えない場合は TV-L1、
 `padding_mask` は、手ブレ補正でできた余白を VACE などで補完したいときに使います。
 
 補正済みフレームを編集したあと元の動きを戻す場合は、Classic/Flow の `meta` を `Video Stabilizer Motion Apply` へ接続します。生成した手持ち感を足す場合は Shake Generator の出力を Motion Apply へ接続します。
+
+細かく調整する場合は、まず `Video Stabilizer Shake Generator` で style を試し、`motion_meta.generator.recipe` を確認して、その値を `Video Stabilizer Shake Generator Manual` に転記してから pan / tilt / roll / zoom などを調整します。
 
 ## パラメータ
 
@@ -69,6 +73,8 @@ Shake Generator:
 | `pace` | `1.0` | 揺れ全体の速さ。 |
 | `seed` | `0` | 決定的生成用の seed。 |
 
+Shake Generator Manual は解決済み recipe を直接公開します: `pan`, `tilt`, `roll`, `zoom`, `drift_freq`, `tremor`, `tremor_freq`, `jitter_rate`, `step`, `randomness`, `virtual_fov`。
+
 Motion Apply:
 
 | Parameter | Default | 説明 |
@@ -76,7 +82,7 @@ Motion Apply:
 | `framing_mode` | `pad` | `pad` または `crop`。 |
 | `interpolation` | `bilinear` | `bilinear` または `bicubic`。 |
 | `motion_blur` | `0.0` | シャッター開角割合。`0.5` がだいたい 180度シャッター相当です。 |
-| `motion_blur_samples` | `9` | blur sampling 品質の advanced control。 |
+| `motion_blur_samples` | `9` | blur sampling 品質の control。 |
 
 ## 出力
 

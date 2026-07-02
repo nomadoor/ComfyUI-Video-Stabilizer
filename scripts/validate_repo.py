@@ -22,6 +22,7 @@ PYTHON_FILES = [
     "nodes/video_stabilizer_inverse.py",
     "nodes/video_stabilizer_motion_apply.py",
     "nodes/video_stabilizer_shake_generator.py",
+    "nodes/video_stabilizer_shake_generator_manual.py",
     "scripts/compare_refactor_behavior.py",
     "scripts/check_crop_aspect_ratio.py",
     "scripts/check_inverse_stabilization.py",

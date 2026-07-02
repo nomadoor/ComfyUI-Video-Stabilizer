@@ -17,7 +17,13 @@ from nodes.motion_meta import (  # noqa: E402
     motion_meta_from_stabilization_warp,
     resolve_motion_meta,
 )
-from nodes.shake_noise import STYLES, generate_shake_components, generate_shake_motion_meta  # noqa: E402
+from nodes.shake_noise import (  # noqa: E402
+    STYLES,
+    ShakeRecipe,
+    generate_shake_components,
+    generate_shake_motion_meta,
+    recipe_from_mapping,
+)
 from nodes.stabilizer_utils import _build_stabilization_warp_meta, _normalize_video_input  # noqa: E402
 
 
@@ -31,6 +37,29 @@ def _frames(count: int, width: int = 32, height: int = 24) -> list[np.ndarray]:
         frame[..., 2] = ((xx + yy + idx) % 7) / 6.0
         frames.append(frame)
     return frames
+
+
+def _generator_block() -> dict[str, object]:
+    return {
+        "node": "shake_generator",
+        "style": "handheld",
+        "amount": 1.0,
+        "pace": 1.0,
+        "seed": 0,
+        "recipe": {
+            "pan": 0.40,
+            "tilt": 0.33,
+            "roll": 0.50,
+            "zoom": 0.003,
+            "drift_freq": 0.35,
+            "tremor": 0.35,
+            "tremor_freq": 5.0,
+            "jitter_rate": 0.0,
+            "step": 0.0,
+            "randomness": 0.3,
+            "virtual_fov": 60.0,
+        },
+    }
 
 
 def _translation_energy(block: dict) -> float:
@@ -60,6 +89,56 @@ def _rotation_degrees(matrix: np.ndarray) -> float:
     return float(np.degrees(np.arctan2(matrix[1, 0], matrix[0, 0])))
 
 
+def _shake(
+    style: str = "handheld",
+    *,
+    frame_count: int = 5,
+    width: int = 64,
+    height: int = 48,
+    fps: float = 16.0,
+    amount: float = 1.0,
+    pace: float = 1.0,
+    seed: int = 123,
+) -> dict:
+    return generate_shake_motion_meta(
+        recipe=STYLES[style],
+        frame_count=frame_count,
+        width=width,
+        height=height,
+        fps=fps,
+        amount=amount,
+        pace=pace,
+        seed=seed,
+        node="shake_generator",
+        style=style,
+    )
+
+
+def _manual_shake(
+    recipe: ShakeRecipe,
+    *,
+    frame_count: int = 5,
+    width: int = 64,
+    height: int = 48,
+    fps: float = 16.0,
+    amount: float = 1.0,
+    pace: float = 1.0,
+    seed: int = 123,
+) -> dict:
+    return generate_shake_motion_meta(
+        recipe=recipe,
+        frame_count=frame_count,
+        width=width,
+        height=height,
+        fps=fps,
+        amount=amount,
+        pace=pace,
+        seed=seed,
+        node="shake_generator_manual",
+        style="manual",
+    )
+
+
 def main() -> int:
     matrices = [
         np.eye(3, dtype=np.float64),
@@ -72,21 +151,7 @@ def main() -> int:
         input_size=(64, 48),
         output_size=(64, 48),
         matrices=matrices,
-        generator={
-            "style": "handheld",
-            "amount": 1.0,
-            "pace": 1.0,
-            "seed": 0,
-            "pan_amount": 1.0,
-            "tilt_amount": 1.0,
-            "roll_amount": 1.0,
-            "zoom_amount": 1.0,
-            "drift_amount": 1.0,
-            "tremor_amount": 1.0,
-            "jitter_amount": 1.0,
-            "randomness": 0.3,
-            "virtual_fov": 60.0,
-        },
+        generator=_generator_block(),
     )
     resolved = resolve_motion_meta({"motion_meta": block})
     if resolved.frame_count != 2 or resolved.input_size != (64, 48) or resolved.output_size != (64, 48):
@@ -115,36 +180,9 @@ def main() -> int:
     else:
         raise AssertionError("missing meta blocks should fail")
 
-    shake_a = generate_shake_motion_meta(
-        frame_count=5,
-        width=64,
-        height=48,
-        fps=16.0,
-        style="handheld",
-        amount=1.0,
-        pace=1.0,
-        seed=123,
-    )
-    shake_b = generate_shake_motion_meta(
-        frame_count=5,
-        width=64,
-        height=48,
-        fps=16.0,
-        style="handheld",
-        amount=1.0,
-        pace=1.0,
-        seed=123,
-    )
-    shake_c = generate_shake_motion_meta(
-        frame_count=5,
-        width=64,
-        height=48,
-        fps=16.0,
-        style="handheld",
-        amount=1.0,
-        pace=1.0,
-        seed=124,
-    )
+    shake_a = _shake(seed=123)
+    shake_b = _shake(seed=123)
+    shake_c = _shake(seed=124)
     if shake_a != shake_b:
         raise AssertionError("shake generation is not deterministic for identical inputs")
     if shake_a["per_frame"] == shake_c["per_frame"]:
@@ -154,76 +192,51 @@ def main() -> int:
     if not np.allclose(np.asarray(shake_a["per_frame"][0]["matrix"], dtype=np.float64), np.eye(3), atol=1e-9):
         raise AssertionError("shake first frame is not identity")
 
-    generate_shake_motion_meta(
-        frame_count=4,
-        width=64,
-        height=48,
-        fps=8.0,
-        style="vibration",
-        amount=1.0,
-        pace=3.0,
-        seed=0,
-    )
+    _shake("vibration", frame_count=4, fps=8.0, pace=3.0, seed=0)
+
+    manual_default = _manual_shake(STYLES["handheld"], seed=33)
+    simple_default = _shake("handheld", seed=33)
+    if manual_default["per_frame"] != simple_default["per_frame"]:
+        raise AssertionError("manual handheld defaults must match simple handheld matrices")
+    if manual_default["generator"]["recipe"] != simple_default["generator"]["recipe"]:
+        raise AssertionError("manual/default recipe metadata should match simple handheld recipe")
 
     for style in STYLES:
-        block_for_style = generate_shake_motion_meta(
-            frame_count=32,
-            width=96,
-            height=54,
-            fps=16.0,
-            style=style,
-            amount=1.0,
-            pace=1.0,
-            seed=17,
-        )
-        first_matrix = np.asarray(block_for_style["per_frame"][0]["matrix"], dtype=np.float64)
+        simple = _shake(style, frame_count=32, width=96, height=54, seed=17)
+        first_matrix = np.asarray(simple["per_frame"][0]["matrix"], dtype=np.float64)
         if not np.allclose(first_matrix, np.eye(3), atol=1e-9):
             raise AssertionError(f"{style} first frame is not identity")
+        round_trip_recipe = recipe_from_mapping(simple["generator"]["recipe"])
+        manual = _manual_shake(round_trip_recipe, frame_count=32, width=96, height=54, seed=17)
+        if simple["per_frame"] != manual["per_frame"]:
+            raise AssertionError(f"{style} recipe did not round-trip through manual generation")
 
     handheld_components = generate_shake_components(
+        recipe=STYLES["handheld"],
         frame_count=128,
         fps=16.0,
-        style="handheld",
         amount=1.0,
         pace=1.0,
         seed=77,
     )
     vibration_components = generate_shake_components(
+        recipe=STYLES["vibration"],
         frame_count=128,
         fps=16.0,
-        style="vibration",
         amount=1.0,
         pace=1.0,
         seed=77,
     )
     walking_components = generate_shake_components(
+        recipe=STYLES["walking"],
         frame_count=128,
         fps=16.0,
-        style="walking",
         amount=1.0,
         pace=1.0,
         seed=77,
     )
-    tripod_block = generate_shake_motion_meta(
-        frame_count=128,
-        width=128,
-        height=72,
-        fps=16.0,
-        style="tripod",
-        amount=1.0,
-        pace=1.0,
-        seed=77,
-    )
-    handheld_block = generate_shake_motion_meta(
-        frame_count=128,
-        width=128,
-        height=72,
-        fps=16.0,
-        style="handheld",
-        amount=1.0,
-        pace=1.0,
-        seed=77,
-    )
+    tripod_block = _shake("tripod", frame_count=128, width=128, height=72, seed=77)
+    handheld_block = _shake("handheld", frame_count=128, width=128, height=72, seed=77)
     if _high_frequency_energy(vibration_components.pan_deg) <= _high_frequency_energy(handheld_components.pan_deg):
         raise AssertionError("vibration should have more high-frequency pan energy than handheld")
     walking_peak = _dominant_frequency(walking_components.tilt_deg, fps=16.0)
@@ -232,23 +245,31 @@ def main() -> int:
     if _translation_energy(tripod_block) * 10.0 >= _translation_energy(handheld_block):
         raise AssertionError("tripod total translation amplitude should be at least one order below handheld")
 
-    no_roll = generate_shake_motion_meta(
+    no_roll = _manual_shake(
+        ShakeRecipe(
+            pan=STYLES["action"].pan,
+            tilt=STYLES["action"].tilt,
+            roll=0.0,
+            zoom=STYLES["action"].zoom,
+            drift_freq=STYLES["action"].drift_freq,
+            tremor=STYLES["action"].tremor,
+            tremor_freq=STYLES["action"].tremor_freq,
+            jitter_rate=STYLES["action"].jitter_rate,
+            step=STYLES["action"].step,
+            randomness=STYLES["action"].randomness,
+            virtual_fov=STYLES["action"].virtual_fov,
+        ),
         frame_count=32,
         width=96,
         height=54,
-        fps=16.0,
-        style="action",
-        amount=1.0,
-        pace=1.0,
         seed=5,
-        roll_amount=0.0,
     )
     rotations = [
         abs(_rotation_degrees(np.asarray(entry["matrix"], dtype=np.float64)))
         for entry in no_roll["per_frame"]
     ]
     if max(rotations) > 1e-9:
-        raise AssertionError("roll_amount=0 should zero generated roll")
+        raise AssertionError("manual roll=0 should zero generated roll")
 
     frames = _frames(3)
     identity_meta = {
@@ -259,21 +280,7 @@ def main() -> int:
             input_size=(32, 24),
             output_size=(32, 24),
             matrices=[np.eye(3, dtype=np.float64) for _ in frames],
-            generator={
-                "style": "handheld",
-                "amount": 0.0,
-                "pace": 1.0,
-                "seed": 0,
-                "pan_amount": 1.0,
-                "tilt_amount": 1.0,
-                "roll_amount": 1.0,
-                "zoom_amount": 1.0,
-                "drift_amount": 1.0,
-                "tremor_amount": 1.0,
-                "jitter_amount": 1.0,
-                "randomness": 0.3,
-                "virtual_fov": 60.0,
-            },
+            generator=_generator_block(),
         )
     }
     baseline_result = apply_motion(_normalize_video_input(frames), identity_meta, (127, 127, 127))
@@ -297,21 +304,7 @@ def main() -> int:
             input_size=(32, 24),
             output_size=(32, 24),
             matrices=[np.eye(3, dtype=np.float64), blur_matrix, blur_matrix @ blur_matrix],
-            generator={
-                "style": "handheld",
-                "amount": 1.0,
-                "pace": 1.0,
-                "seed": 0,
-                "pan_amount": 1.0,
-                "tilt_amount": 1.0,
-                "roll_amount": 1.0,
-                "zoom_amount": 1.0,
-                "drift_amount": 1.0,
-                "tremor_amount": 1.0,
-                "jitter_amount": 1.0,
-                "randomness": 0.3,
-                "virtual_fov": 60.0,
-            },
+            generator=_generator_block(),
         )
     }
     blur_a = apply_motion(
@@ -342,21 +335,7 @@ def main() -> int:
             input_size=(32, 24),
             output_size=(32, 24),
             matrices=[shift for _ in frames],
-            generator={
-                "style": "handheld",
-                "amount": 3.0,
-                "pace": 1.0,
-                "seed": 0,
-                "pan_amount": 1.0,
-                "tilt_amount": 1.0,
-                "roll_amount": 1.0,
-                "zoom_amount": 1.0,
-                "drift_amount": 1.0,
-                "tremor_amount": 1.0,
-                "jitter_amount": 1.0,
-                "randomness": 0.3,
-                "virtual_fov": 60.0,
-            },
+            generator=_generator_block(),
         )
     }
     crop_result = apply_motion(
@@ -380,12 +359,18 @@ def main() -> int:
         "import time",
         "from time",
         "time.time",
+        "advanced=True",
     )
-    for relative_path in ("nodes/shake_noise.py", "nodes/video_stabilizer_shake_generator.py"):
+    for relative_path in (
+        "nodes/shake_noise.py",
+        "nodes/video_stabilizer_shake_generator.py",
+        "nodes/video_stabilizer_shake_generator_manual.py",
+        "nodes/video_stabilizer_motion_apply.py",
+    ):
         text = (ROOT / relative_path).read_text(encoding="utf-8")
         for pattern in forbidden_patterns:
             if pattern in text:
-                raise AssertionError(f"forbidden hidden randomness pattern {pattern!r} in {relative_path}")
+                raise AssertionError(f"forbidden pattern {pattern!r} in {relative_path}")
 
     print("Motion meta check passed.")
     return 0

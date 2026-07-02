@@ -4,12 +4,13 @@
 
 A ComfyUI custom node package for CPU-friendly video stabilization, padding mask generation, reusable motion metadata, and motion restore workflows.
 
-It provides four active nodes:
+It provides six nodes:
 
 - **Classic**: sparse feature tracking with OpenCV / NumPy
 - **Flow**: dense optical flow using OpenCV DIS by default
 - **Motion Apply**: applies motion metadata to frames
-- **Shake Generator**: creates deterministic handheld-style motion metadata without changing pixels
+- **Shake Generator**: creates deterministic style-based motion metadata without changing pixels
+- **Shake Generator Manual**: creates the same kind of metadata from explicit recipe values
 
 https://github.com/user-attachments/assets/7da060c1-d775-47b7-91e6-f7a2ce147389
 
@@ -25,6 +26,7 @@ https://github.com/user-attachments/assets/7da060c1-d775-47b7-91e6-f7a2ce147389
 | `Video Stabilizer Flow` | Higher-accuracy stabilization using DIS optical flow. TV-L1 is optional when `cv2.optflow` is available. |
 | `Video Stabilizer Motion Apply` | Applies `motion_meta` JSON to frames with pad/crop framing and optional motion blur. |
 | `Video Stabilizer Shake Generator` | Emits deterministic shake `motion_meta`; `style` chooses motion character and `amount` controls strength. |
+| `Video Stabilizer Shake Generator Manual` | Emits deterministic shake `motion_meta` from explicit pan/tilt/roll/zoom recipe values. |
 | `Video Stabilizer Inverse` | Deprecated compatibility node for restoring removed camera shake. |
 
 Flow normally uses DIS optical flow. If unavailable, it automatically falls back through TV-L1, translation estimation, and identity.
@@ -36,6 +38,8 @@ Input a video or batched images into either `Video Stabilizer Classic` or `Video
 Use `padding_mask` when you want VACE or another outpainting workflow to fill borders created by stabilization.
 
 Connect Classic/Flow `meta` to `Video Stabilizer Motion Apply` to restore the removed motion after editing stabilized frames. Connect Shake Generator output to Motion Apply when you want to add generated handheld motion.
+
+For tuning, start with `Video Stabilizer Shake Generator`, inspect `motion_meta.generator.recipe`, then enter those values in `Video Stabilizer Shake Generator Manual` and adjust the absolute pan/tilt/roll/zoom recipe.
 
 ## Parameters
 
@@ -69,6 +73,8 @@ Shake Generator:
 | `pace` | `1.0` | Overall shake speed. |
 | `seed` | `0` | Deterministic seed. |
 
+Shake Generator Manual exposes the resolved recipe directly: `pan`, `tilt`, `roll`, `zoom`, `drift_freq`, `tremor`, `tremor_freq`, `jitter_rate`, `step`, `randomness`, and `virtual_fov`.
+
 Motion Apply:
 
 | Parameter | Default | Notes |
@@ -76,7 +82,7 @@ Motion Apply:
 | `framing_mode` | `pad` | `pad` or `crop`. |
 | `interpolation` | `bilinear` | `bilinear` or `bicubic`. |
 | `motion_blur` | `0.0` | Shutter fraction. `0.5` is roughly a 180-degree shutter. |
-| `motion_blur_samples` | `9` | Advanced quality control for blur sampling. |
+| `motion_blur_samples` | `9` | Quality control for blur sampling. |
 
 ## Outputs
 

@@ -27,6 +27,7 @@ except ImportError:  # pragma: no cover - fallback for static analysis
 from comfy_api.latest import ComfyExtension, io
 from comfy.utils import ProgressBar
 
+from .motion_meta import motion_meta_from_stabilization_warp
 from .stabilizer_utils import (
     _build_stabilization_warp_meta,
     _compute_bounding_boxes,
@@ -54,6 +55,20 @@ from .stabilizer_utils import (
 FlowBackend = Literal["DIS", "TVL1", "phase_correlate"]
 
 JSONType = io.Custom("JSON")
+
+
+def _attach_motion_meta(meta: Dict[str, Any], fps: float) -> Dict[str, Any]:
+    try:
+        motion_meta = motion_meta_from_stabilization_warp(
+            meta["stabilization_warp"],
+            fps=fps,
+            source="estimated_flow",
+        )
+    except (KeyError, TypeError, ValueError, np.linalg.LinAlgError):
+        return meta
+    if motion_meta is not None:
+        meta["motion_meta"] = motion_meta
+    return meta
 
 
 def _create_flow_backend(backend: Literal["DIS", "TVL1"]) -> Any:
@@ -253,7 +268,7 @@ def _stabilize_frames(
             "padding_fraction_mean": 0.0,
             "padding_fraction_max": 0.0,
         }
-        return StabilizationResult([], [], meta)
+        return StabilizationResult([], [], _attach_motion_meta(meta, fps_effective))
 
     def _check_interrupt() -> None:
         if model_management is not None:
@@ -290,7 +305,7 @@ def _stabilize_frames(
             "fps_effective": fps_effective,
         }
         pbar.update_absolute(progress_total, progress_total)
-        return StabilizationResult([frame_rgb], [zero_mask], meta)
+        return StabilizationResult([frame_rgb], [zero_mask], _attach_motion_meta(meta, fps_effective))
 
     working_size = _working_estimation_size(context.width, context.height)
     gray_frames = [_make_gray_for_estimation(frame, working_size) for frame in frames]
@@ -409,7 +424,7 @@ def _stabilize_frames(
             }
             pbar.update_absolute(progress_total, progress_total)
             frames_rgb = [_ensure_rgb(frame) for frame in frames]
-            return StabilizationResult(frames_rgb, [zero_mask] * len(frames_rgb), meta)
+            return StabilizationResult(frames_rgb, [zero_mask] * len(frames_rgb), _attach_motion_meta(meta, fps_effective))
 
         safety_margin_px = max(0.5, 0.02 * max(context.width, context.height))
         (
@@ -620,7 +635,7 @@ def _stabilize_frames(
         "padding_fraction_max": float(np.max(padded_ratios)),
     }
 
-    return StabilizationResult(stabilized_frames, padding_masks, meta)
+    return StabilizationResult(stabilized_frames, padding_masks, _attach_motion_meta(meta, fps_effective))
 
 
 class VideoStabilizerFlow(io.ComfyNode):
@@ -630,7 +645,7 @@ class VideoStabilizerFlow(io.ComfyNode):
     def define_schema(cls) -> io.Schema:
         schema = io.Schema(
             node_id="video_stabilizer_flow",
-            display_name="Video Stabilizer (Flow)",
+            display_name="Video Stabilizer Flow",
             category="Video/Stabilization",
             description=(
                 "CPU-friendly video stabilization using dense optical flow with configurable transforms "

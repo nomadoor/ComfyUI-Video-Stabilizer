@@ -11,8 +11,9 @@ from typing import Any
 
 from comfy_api.latest import ComfyExtension, io
 
+from .motion_apply import apply_motion
+from .motion_meta import resolve_motion_meta
 from .stabilizer_utils import (
-    _apply_inverse_stabilization,
     _convert_masks_for_output,
     _normalize_video_input,
     _parse_padding_color,
@@ -32,9 +33,11 @@ class VideoStabilizerInverse(io.ComfyNode):
             display_name="Video Stabilizer Inverse",
             category="Video/Stabilization",
             description=(
-                "Restores stabilized frames to the original canvas using stabilization metadata, "
-                "and emits a padding mask for areas without source pixels."
+                "Deprecated: use Video Stabilizer Motion Apply. Restores stabilized frames to the "
+                "original canvas using stabilization metadata, and emits a padding mask for areas "
+                "without source pixels."
             ),
+            is_deprecated=True,
         )
         schema.inputs = [
             io.Image.Input("frames", display_name="Frames"),
@@ -62,7 +65,24 @@ class VideoStabilizerInverse(io.ComfyNode):
     ) -> io.NodeOutput:
         context = _normalize_video_input(frames)
         padding_rgb = _parse_padding_color(padding_color)
-        result = _apply_inverse_stabilization(context, meta, padding_rgb)
+        motion = resolve_motion_meta(meta)
+        result = apply_motion(
+            context,
+            meta,
+            padding_rgb,
+            framing_mode="pad",
+            interpolation="bilinear",
+        )
+        result.meta.pop("motion_apply", None)
+        result.meta["inverse_stabilization"] = {
+            "source_size": [int(motion.output_size[0]), int(motion.output_size[1])],
+            "input_size": [int(motion.input_size[0]), int(motion.input_size[1])],
+            "output_size": [int(motion.output_size[0]), int(motion.output_size[1])],
+            "matrix_convention": "stabilized_to_source",
+            "source_matrix_convention": "source_to_stabilized",
+            "framing_mode": meta.get("stabilization_warp", {}).get("framing_mode") if isinstance(meta, dict) else None,
+            "note": "Restores original motion/canvas; pixels discarded by crop framing cannot be recovered.",
+        }
 
         video_payload = _reconstruct_video(result.frames, context)
         mask_payload = _convert_masks_for_output(result.masks)

@@ -45,6 +45,7 @@ __all__ = [
     "_compute_bounding_boxes",
     "_min_content_ratio",
     "_convert_masks_for_output",
+    "_resolve_fps",
 ]
 
 
@@ -69,6 +70,13 @@ class VideoContext:
     fps: float | None
     template_kind: Literal["dict", "sequence"]
     template_meta: Dict[str, Any]
+
+
+def _resolve_fps(context: VideoContext, frame_rate: float, default: float = 16.0) -> float:
+    for candidate in (context.fps, frame_rate, default):
+        if isinstance(candidate, (int, float)) and np.isfinite(candidate) and candidate > 0.0:
+            return float(candidate)
+    return float(default)
 
 
 @dataclass

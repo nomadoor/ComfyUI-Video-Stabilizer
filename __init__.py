@@ -1,23 +1,37 @@
 """
 ComfyUI entrypoint for the Video Stabilizer custom node package.
 
-Registers both the classic feature-tracking stabilizer and the dense-flow variant.
+Registers the stabilizer nodes and motion metadata producer/consumer helpers.
 """
 
 from __future__ import annotations
 
 from comfy_api.latest import ComfyExtension
 
+from .nodes.node_replacements import register_node_replacements
 from .nodes.video_stabilizer_inverse import VideoStabilizerInverse
 from .nodes.video_stabilizer_classic import VideoStabilizerClassic
 from .nodes.video_stabilizer_flow import VideoStabilizerFlow
+from .nodes.video_stabilizer_motion_apply import VideoStabilizerMotionApply
+from .nodes.video_stabilizer_shake_generator import VideoStabilizerShakeGenerator
+from .nodes.video_stabilizer_shake_generator_manual import VideoStabilizerShakeGeneratorManual
 
 __all__ = ["comfy_entrypoint"]
 
 
 class VideoStabilizerSuiteExtension(ComfyExtension):
     async def get_node_list(self) -> list[type]:
-        return [VideoStabilizerClassic, VideoStabilizerFlow, VideoStabilizerInverse]
+        return [
+            VideoStabilizerClassic,
+            VideoStabilizerFlow,
+            VideoStabilizerMotionApply,
+            VideoStabilizerShakeGenerator,
+            VideoStabilizerShakeGeneratorManual,
+            VideoStabilizerInverse,
+        ]
+
+    async def on_load(self) -> None:
+        await register_node_replacements()
 
 
 async def comfy_entrypoint() -> VideoStabilizerSuiteExtension:

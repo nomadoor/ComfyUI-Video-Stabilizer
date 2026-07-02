@@ -12,13 +12,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON_FILES = [
     "__init__.py",
+    "nodes/motion_apply.py",
+    "nodes/motion_meta.py",
+    "nodes/node_replacements.py",
+    "nodes/shake_noise.py",
     "nodes/stabilizer_utils.py",
     "nodes/video_stabilizer_classic.py",
     "nodes/video_stabilizer_flow.py",
     "nodes/video_stabilizer_inverse.py",
+    "nodes/video_stabilizer_motion_apply.py",
+    "nodes/video_stabilizer_shake_generator.py",
+    "nodes/video_stabilizer_shake_generator_manual.py",
     "scripts/compare_refactor_behavior.py",
     "scripts/check_crop_aspect_ratio.py",
     "scripts/check_inverse_stabilization.py",
+    "scripts/check_motion_meta.py",
     "scripts/check_node_schema.py",
     "scripts/check_workflows.py",
 ]
@@ -48,6 +56,7 @@ def main() -> int:
         ("workflow json", lambda: run_script("scripts/check_workflows.py")),
         ("crop aspect ratio", lambda: run_script("scripts/check_crop_aspect_ratio.py")),
         ("inverse stabilization", lambda: run_script("scripts/check_inverse_stabilization.py")),
+        ("motion meta", lambda: run_script("scripts/check_motion_meta.py")),
     ]
 
     failed: list[str] = []

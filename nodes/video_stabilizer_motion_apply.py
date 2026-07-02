@@ -42,8 +42,8 @@ class VideoStabilizerMotionApply(io.ComfyNode):
             JSONType.Input("motion_meta", display_name="Motion Meta"),
             io.Combo.Input(
                 "framing_mode",
-                options=["pad", "crop"],
-                default="pad",
+                options=["crop_and_pad", "crop", "expand"],
+                default="crop_and_pad",
                 display_name="Framing Mode",
             ),
             io.Combo.Input(

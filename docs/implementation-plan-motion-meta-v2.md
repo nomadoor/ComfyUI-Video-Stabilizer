@@ -98,21 +98,22 @@ validate_motion_meta(block: dict) -> None  # 型・サイズ・per_frame長・3x
 入力(この順):
 1. `frames`: `io.Image.Input`(socket)
 2. `motion_meta`: `io.Custom("JSON").Input`(socket)— 型名はJSONのまま
-3. `framing_mode`: `io.Combo.Input(["pad", "crop"], default="pad")`
+3. `framing_mode`: `io.Combo.Input(["crop_and_pad", "crop", "expand"], default="crop_and_pad")`
 4. `interpolation`: `io.Combo.Input(["bilinear", "bicubic"], default="bilinear")`
 5. `padding_color`: `io.Color.Input(default="#7F7F7F")`
 
 出力: `frames`(Image, "Frames") / `padding_mask`(Mask, "Padding Mask") / `meta`(JSON, "Meta")
 
-motion blur は **v1では実装しない**(ADRに将来拡張として記載のみ)。
+motion blur は Motion Apply の pixel application concern として実装する。
 
 ### 挙動(nodes/motion_apply.py の `apply_motion()`)
 
 1. `resolve_motion_meta(meta)` で正規化。
 2. 入力フレームサイズ == `input_size`、フレーム数 == `frame_count` を検証(不一致は明確なValueError。旧Inverseのメッセージ水準)。
-3. **pad モード**(デフォルト): 各フレームを `cv2.warpPerspective(frame, matrix, output_size, flags=interp, BORDER_CONSTANT, borderValue=padding)` で出力キャンバスへ。padding_mask は ones を INTER_NEAREST でwarpして反転(既存 `_apply_inverse_stabilization` のループと同一パターン。実装はそこから共通化してよい)。**legacy meta + pad + bilinear = 旧Inverseとピクセル一致**が必須要件。
-4. **crop モード**: 全フレームの有効領域maskの論理AND(共通有効領域)を取り、出力アスペクト比を保った中心配置の最大内接矩形をスケール二分探索で求める(既存 `_refine_no_padding_crop` / keep_fov crop のアプローチを参照実装とする)。求めた `crop_matrix`(平行移動+等方スケールで `output_size` に引き伸ばし)を各 `matrix` に前乗せ(`crop_matrix @ matrix`)して warp。共通有効領域が退化する(内接矩形が極端に小さい: スケール>4x が必要)場合は pad にフォールバックし、meta に `"framing_fallback": "pad"` を記録(soft-fail方針)。padding_mask は crop 成功時は全ゼロ。
-5. 出力 meta = 入力 meta のコピー + `"motion_apply": {"input_size", "output_size", "framing_mode", "interpolation", "source"}`。
+3. **crop_and_pad モード**(デフォルト): 各フレームを `cv2.warpPerspective(frame, matrix, output_size, flags=interp, BORDER_CONSTANT, borderValue=padding)` で `motion_meta.output_size` キャンバスへ。はみ出しはclip、空きはpadding。padding_mask は ones を INTER_NEAREST でwarpして反転。**legacy meta + crop_and_pad + bilinear = 旧Inverseとピクセル一致**が必須要件。
+4. **crop モード**: 全フレームの有効領域maskの論理AND(共通有効領域)を取り、出力アスペクト比を保った中心配置の最大内接矩形をスケール二分探索で求める(既存 `_refine_no_padding_crop` / keep_fov crop のアプローチを参照実装とする)。求めた `crop_matrix`(平行移動+等方スケールで `output_size` に引き伸ばし)を各 `matrix` に前乗せ(`crop_matrix @ matrix`)して warp。共通有効領域が退化する(内接矩形が極端に小さい: スケール>4x が必要)場合は crop_and_pad にフォールバックし、meta に `"framing_fallback": "crop_and_pad"` を記録(soft-fail方針)。padding_mask は crop 成功時は全ゼロ。
+5. **expand モード**: 全フレームのwarp後コンテンツbboxのunionをキャンバスにし、translationを各matrixに前乗せしてwarpする。コンテンツはclipしないが、unionキャンバス内で各フレームごとのpaddingは出る。
+6. 出力 meta = 入力 meta のコピー + `"motion_apply": {"input_size", "output_size", "framing_mode", "interpolation", "source"}`。
 
 interpolation は `cv2.INTER_LINEAR` / `cv2.INTER_CUBIC`。maskは常に `INTER_NEAREST`。
 
@@ -120,7 +121,7 @@ interpolation は `cv2.INTER_LINEAR` / `cv2.INTER_CUBIC`。maskは常に `INTER_
 
 `nodes/video_stabilizer_inverse.py` は残すが薄いwrapper化:
 - `define_schema()` に `is_deprecated=True` を追加。description に「Deprecated: use Video Stabilizer Motion Apply」を追記。入出力は現状のまま一切変更しない。
-- `execute()` は `resolve_motion_meta` + `apply_motion(framing="pad", interpolation="bilinear")` を呼ぶ実装に置換。ただし出力metaは既存の `inverse_stabilization` ブロック([stabilizer_utils.py:990-998](nodes/stabilizer_utils.py#L990))を維持すること(`scripts/check_inverse_stabilization.py` が通ること)。
+- `execute()` は `resolve_motion_meta` + `apply_motion(framing="crop_and_pad", interpolation="bilinear")` を呼ぶ実装に置換。ただし出力metaは既存の `inverse_stabilization` ブロック([stabilizer_utils.py:990-998](nodes/stabilizer_utils.py#L990))を維持すること(`scripts/check_inverse_stabilization.py` が通ること)。
 - `_apply_inverse_stabilization` 本体は motion_apply.py への委譲に書き換えるか、そのまま残して wrapper 側だけ共通化するかは実装判断。**挙動が変わらないことが唯一の要件。**
 
 ---
@@ -206,7 +207,7 @@ async def register_node_replacements() -> None:
             {"new_id": "frames", "old_id": "frames"},
             {"new_id": "motion_meta", "old_id": "meta"},
             {"new_id": "padding_color", "old_id": "padding_color"},
-            {"new_id": "framing_mode", "set_value": "pad"},
+            {"new_id": "framing_mode", "set_value": "crop_and_pad"},
             {"new_id": "interpolation", "set_value": "bilinear"},
         ],
         output_mapping=[
@@ -257,8 +258,8 @@ repoにpytestは無いので、既存の `check_*.py` 形式(plain Python、Comf
 3. **フレーム数一致**: N フレームの frames_context → `per_frame` 長 N、frame_count N。
 4. **Nyquist**: fps=8, speed=3 でもクラッシュせず帯域が fps/2 にクランプされる。
 5. **identity適用**: 全frame identity matrix の motion_meta → 出力≒入力(allclose)、padding_mask 全ゼロ。
-6. **旧Inverse等価**: 合成した `stabilization_warp` meta に対し、新 `apply_motion(pad, bilinear)` の出力が既存 `_apply_inverse_stabilization` と一致(frames/mask とも allclose)。既存 `scripts/check_inverse_stabilization.py` も無変更で通ること。
-7. **crop フォールバック**: 極端な振幅で crop → pad フォールバックし `framing_fallback` が記録される。
+6. **旧Inverse等価**: 合成した `stabilization_warp` meta に対し、新 `apply_motion(crop_and_pad, bilinear)` の出力が既存 `_apply_inverse_stabilization` と一致(frames/mask とも allclose)。既存 `scripts/check_inverse_stabilization.py` も無変更で通ること。
+7. **crop フォールバック**: 極端な振幅で crop → crop_and_pad フォールバックし `framing_fallback` が記録される。
 8. **隠れランダム性禁止**: shake_noise.py / ノード実装に `np.random.seed` / `np.random.rand` 系のglobal API・`random.` ・`time.` が無いことをgrepで確認する静的チェック。
 
 最後に `python3 scripts/validate_repo.py` を実行。可能ならComfyUI実環境でノードロード + 旧 `video_stabilizer_inverse` を含むworkflowを開いて Motion Apply への置換が提示されることを確認。

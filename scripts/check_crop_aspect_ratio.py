@@ -144,7 +144,7 @@ def check_motion_apply_replays_stabilizer(
         node_module._normalize_video_input(frames),
         result.meta,
         (127, 127, 127),
-        framing_mode="pad",
+        framing_mode="crop_and_pad",
         interpolation="bilinear",
     )
     direct_frames = np.asarray(result.frames, dtype=np.float32)

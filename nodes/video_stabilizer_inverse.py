@@ -72,7 +72,7 @@ class VideoStabilizerInverse(io.ComfyNode):
             context,
             inverse_meta,
             padding_rgb,
-            framing_mode="pad",
+            framing_mode="crop_and_pad",
             interpolation="bilinear",
         )
         if isinstance(meta, dict) and isinstance(meta.get("motion_meta"), dict):

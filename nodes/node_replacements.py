@@ -15,7 +15,7 @@ async def register_node_replacements() -> None:
                 {"new_id": "frames", "old_id": "frames"},
                 {"new_id": "motion_meta", "old_id": "meta"},
                 {"new_id": "padding_color", "old_id": "padding_color"},
-                {"new_id": "framing_mode", "set_value": "pad"},
+                {"new_id": "framing_mode", "set_value": "crop_and_pad"},
                 {"new_id": "interpolation", "set_value": "bilinear"},
             ],
             output_mapping=[

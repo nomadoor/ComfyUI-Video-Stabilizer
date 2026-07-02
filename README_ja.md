@@ -24,7 +24,7 @@ https://github.com/user-attachments/assets/7da060c1-d775-47b7-91e6-f7a2ce147389
 | --- | --- |
 | `Video Stabilizer Classic` | 特徴点トラッキングによる軽量な汎用 stabilizer。 |
 | `Video Stabilizer Flow` | DIS optical flow による高精度 stabilizer。`cv2.optflow` が利用可能な場合のみ TV-L1 も使えます。 |
-| `Video Stabilizer Motion Apply` | `motion_meta` JSON を pad / crop framing と optional motion blur でフレームへ適用します。 |
+| `Video Stabilizer Motion Apply` | `motion_meta` JSON を crop / crop+pad / expand framing と optional motion blur でフレームへ適用します。 |
 | `Video Stabilizer Shake Generator` | 決定的な shake `motion_meta` を出力します。`style` は揺れの種類、`amount` は強さです。 |
 | `Video Stabilizer Shake Generator Manual` | pan / tilt / roll / zoom などの絶対値 recipe から shake `motion_meta` を出力します。 |
 | `Video Stabilizer Inverse` | 元の手ブレを戻すための deprecated 互換ノード。 |
@@ -79,7 +79,7 @@ Motion Apply:
 
 | Parameter | Default | 説明 |
 | --- | ---: | --- |
-| `framing_mode` | `pad` | `pad` または `crop`。 |
+| `framing_mode` | `crop_and_pad` | `crop`, `crop_and_pad`, `expand` から選択します。 |
 | `interpolation` | `bilinear` | `bilinear` または `bicubic`。 |
 | `motion_blur` | `0.0` | シャッター開角割合。`0.5` がだいたい 180度シャッター相当です。 |
 | `motion_blur_quality` | `Standard` | `Draft`, `Standard`, `High`, `Ultra` から選びます。高品質ほど多くのシャッターサンプルを平均し、滑らかですが遅くなります。 |

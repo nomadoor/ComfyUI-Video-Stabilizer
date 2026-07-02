@@ -24,7 +24,7 @@ https://github.com/user-attachments/assets/7da060c1-d775-47b7-91e6-f7a2ce147389
 | --- | --- |
 | `Video Stabilizer Classic` | Lightweight general-purpose stabilization using feature tracking. |
 | `Video Stabilizer Flow` | Higher-accuracy stabilization using DIS optical flow. TV-L1 is optional when `cv2.optflow` is available. |
-| `Video Stabilizer Motion Apply` | Applies `motion_meta` JSON to frames with pad/crop framing and optional motion blur. |
+| `Video Stabilizer Motion Apply` | Applies `motion_meta` JSON to frames with crop/crop+pad/expand framing and optional motion blur. |
 | `Video Stabilizer Shake Generator` | Emits deterministic shake `motion_meta`; `style` chooses motion character and `amount` controls strength. |
 | `Video Stabilizer Shake Generator Manual` | Emits deterministic shake `motion_meta` from explicit pan/tilt/roll/zoom recipe values. |
 | `Video Stabilizer Inverse` | Deprecated compatibility node for restoring removed camera shake. |
@@ -79,7 +79,7 @@ Motion Apply:
 
 | Parameter | Default | Notes |
 | --- | ---: | --- |
-| `framing_mode` | `pad` | `pad` or `crop`. |
+| `framing_mode` | `crop_and_pad` | `crop`, `crop_and_pad`, or `expand`. |
 | `interpolation` | `bilinear` | `bilinear` or `bicubic`. |
 | `motion_blur` | `0.0` | Shutter fraction. `0.5` is roughly a 180-degree shutter. |
 | `motion_blur_quality` | `Standard` | `Draft`, `Standard`, `High`, or `Ultra`. Higher quality averages more shutter samples and is slower. |

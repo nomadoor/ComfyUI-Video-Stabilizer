@@ -310,6 +310,29 @@ def main() -> int:
     ):
         raise AssertionError("motion_blur=0 should use the exact baseline path")
 
+    expand_matrix = np.array([[1.0, 0.0, 6.0], [0.0, 1.0, -4.0], [0.0, 0.0, 1.0]], dtype=np.float64)
+    expand_meta = {
+        "motion_meta": build_motion_meta_v2(
+            source="generated_shake",
+            frame_count=3,
+            fps=16.0,
+            input_size=(32, 24),
+            output_size=(32, 24),
+            matrices=[np.eye(3, dtype=np.float64), expand_matrix, np.linalg.inv(expand_matrix)],
+            generator=_generator_block(),
+        )
+    }
+    expand_result = apply_motion(
+        _normalize_video_input(frames),
+        expand_meta,
+        (127, 127, 127),
+        framing_mode="expand",
+    )
+    if expand_result.frames.shape[1] <= 24 or expand_result.frames.shape[2] <= 32:
+        raise AssertionError(f"expand framing did not enlarge canvas: {expand_result.frames.shape}")
+    if expand_result.meta.get("motion_apply", {}).get("framing_mode") != "expand":
+        raise AssertionError("expand framing metadata missing")
+
     blur_matrix = np.array([[1.0, 0.0, 2.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
     blur_meta = {
         "motion_meta": build_motion_meta_v2(
@@ -388,8 +411,8 @@ def main() -> int:
         (127, 127, 127),
         framing_mode="crop",
     )
-    if crop_result.meta.get("framing_fallback") != "pad":
-        raise AssertionError("extreme crop did not fall back to pad")
+    if crop_result.meta.get("framing_fallback") != "crop_and_pad":
+        raise AssertionError("extreme crop did not fall back to crop_and_pad")
 
     forbidden_patterns = (
         "np.random.seed",

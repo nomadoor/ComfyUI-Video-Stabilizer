@@ -7,9 +7,9 @@ import cv2
 import numpy as np
 
 from .motion_meta import MotionMeta, motion_meta_from_stabilization_warp, resolve_motion_meta
-from .stabilizer_utils import VideoContext, _ensure_rgb
+from .stabilizer_utils import VideoContext, _compute_bounding_boxes, _ensure_rgb, _prepare_expand_transform
 
-ApplyFramingMode = Literal["pad", "crop"]
+ApplyFramingMode = Literal["crop_and_pad", "crop", "expand", "pad"]
 ApplyInterpolation = Literal["bilinear", "bicubic"]
 ProgressCallback = Callable[[], None]
 
@@ -285,12 +285,21 @@ def _center_crop_matrix_from_common(common: np.ndarray, output_size: Tuple[int, 
     )
 
 
+def _expand_matrices(
+    matrices: list[np.ndarray],
+    input_size: Tuple[int, int],
+) -> tuple[list[np.ndarray], Tuple[int, int]]:
+    mins, maxs = _compute_bounding_boxes(matrices, input_size[0], input_size[1])
+    translate_matrix, output_size = _prepare_expand_transform(mins, maxs)
+    return [translate_matrix @ matrix for matrix in matrices], output_size
+
+
 def apply_motion(
     context: VideoContext,
     meta: Dict[str, Any],
     padding_rgb: Tuple[int, int, int],
     *,
-    framing_mode: ApplyFramingMode = "pad",
+    framing_mode: ApplyFramingMode = "crop_and_pad",
     interpolation: ApplyInterpolation = "bilinear",
     motion_blur: float = 0.0,
     motion_blur_samples: int = 9,
@@ -303,12 +312,13 @@ def apply_motion(
     output_size = motion.output_size
     interp_flag = _interpolation_flag(interpolation)
     result_meta = dict(meta)
-    effective_framing = framing_mode
+    requested_framing = "crop_and_pad" if framing_mode == "pad" else framing_mode
+    effective_framing = requested_framing
     motion_blur = float(np.clip(motion_blur, 0.0, 1.0))
     motion_blur_samples = int(np.clip(motion_blur_samples, 3, 33))
     warp_fn = _warp_with_matrices if motion_blur <= 0.0 else _warp_with_motion_blur
 
-    if framing_mode == "pad":
+    if requested_framing == "crop_and_pad":
         if motion_blur <= 0.0:
             frames, masks = warp_fn(
                 context,
@@ -329,7 +339,7 @@ def apply_motion(
                 motion_blur_samples,
                 progress_callback=progress_callback,
             )
-    elif framing_mode == "crop":
+    elif requested_framing == "crop":
         common = _common_valid_mask(motion.input_size, output_size, matrices, progress_callback=progress_callback)
         crop_matrix = _center_crop_matrix_from_common(common, output_size)
         if crop_matrix is None:
@@ -353,8 +363,8 @@ def apply_motion(
                     motion_blur_samples,
                     progress_callback=progress_callback,
                 )
-            result_meta["framing_fallback"] = "pad"
-            effective_framing = "pad"
+            result_meta["framing_fallback"] = "crop_and_pad"
+            effective_framing = "crop_and_pad"
         else:
             cropped_matrices = [crop_matrix @ matrix for matrix in matrices]
             if motion_blur <= 0.0:
@@ -379,8 +389,33 @@ def apply_motion(
                     masks_zero=True,
                     progress_callback=progress_callback,
                 )
+    elif requested_framing == "expand":
+        expanded_matrices, expanded_size = _expand_matrices(matrices, motion.input_size)
+        output_size = expanded_size
+        if motion_blur <= 0.0:
+            frames, masks = warp_fn(
+                context,
+                expanded_matrices,
+                output_size,
+                interp_flag,
+                padding_rgb,
+                progress_callback=progress_callback,
+            )
+        else:
+            frames, masks = warp_fn(
+                context,
+                expanded_matrices,
+                output_size,
+                interp_flag,
+                padding_rgb,
+                motion_blur,
+                motion_blur_samples,
+                progress_callback=progress_callback,
+            )
     else:
-        raise ValueError(f"Unsupported framing_mode {framing_mode!r}; expected 'pad' or 'crop'.")
+        raise ValueError(
+            f"Unsupported framing_mode {framing_mode!r}; expected 'crop_and_pad', 'crop', or 'expand'."
+        )
 
     result_meta["motion_apply"] = {
         "input_size": [int(motion.input_size[0]), int(motion.input_size[1])],

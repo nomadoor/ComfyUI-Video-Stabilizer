@@ -29,7 +29,7 @@ Inputs:
 
 - `frames`
 - `motion_meta` as `io.Custom("JSON")`
-- `framing_mode: pad | crop`
+- `framing_mode: crop_and_pad | crop | expand`
 - `interpolation: bilinear | bicubic`
 - `padding_color`
 - `motion_blur: 0.0..1.0`
@@ -44,10 +44,11 @@ Outputs:
 Behavior:
 
 - Validate frame size and frame count against `motion_meta`.
-- `pad` warps each frame to `output_size` and emits a padding mask.
+- `crop_and_pad` warps each frame to `motion_meta.output_size`, clips outside that canvas, pads uncovered pixels, and emits a padding mask.
 - `crop` finds a shared valid region, applies an aspect-preserving center crop, and emits an all-zero mask.
-- If `crop` cannot find a usable shared region without more than 4x scale, fall back to `pad` and record `framing_fallback: pad`.
-- Legacy `stabilization_warp` metadata resolves to `motion_meta` by inverting `applied_matrix`, so Motion Apply with `pad` and `bilinear` matches the deprecated Inverse behavior.
+- `expand` computes the union bounding box of all transformed frame corners, prepends a translation, and expands the output canvas so no transformed source content is clipped. Individual frames may still have padding inside the union canvas.
+- If `crop` cannot find a usable shared region without more than 4x scale, fall back to `crop_and_pad` and record `framing_fallback: crop_and_pad`.
+- Legacy `stabilization_warp` metadata resolves to `motion_meta` by inverting `applied_matrix`, so Motion Apply with `crop_and_pad` and `bilinear` matches the deprecated Inverse behavior.
 - If both top-level `motion_meta` and legacy `stabilization_warp` are present, Motion Apply selects the block whose input size matches the connected frames. This lets Classic/Flow metadata work for both original-frame reapplication and stabilized-frame inverse restoration.
 - `motion_blur=0.0` uses the same path as unblurred apply.
 - `motion_blur>0.0` linearly interpolates adjacent frame matrices, warps multiple shutter samples, averages frames, and emits a soft padding mask based on mean coverage. Blur Quality maps to shutter sample counts: Draft=5, Standard=9, High=17, Ultra=33.

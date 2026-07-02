@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_NODES = {
     "nodes/video_stabilizer_classic.py": {
         "node_id": "video_stabilizer_classic",
-        "display_name": "Video Stabilizer (Classic)",
+        "display_name": "Video Stabilizer Classic",
         "inputs": [
             "frames",
             "frame_rate",
@@ -27,7 +27,7 @@ EXPECTED_NODES = {
     },
     "nodes/video_stabilizer_flow.py": {
         "node_id": "video_stabilizer_flow",
-        "display_name": "Video Stabilizer (Flow)",
+        "display_name": "Video Stabilizer Flow",
         "inputs": [
             "frames",
             "frame_rate",
@@ -44,8 +44,21 @@ EXPECTED_NODES = {
     "nodes/video_stabilizer_inverse.py": {
         "node_id": "video_stabilizer_inverse",
         "display_name": "Video Stabilizer Inverse",
+        "is_deprecated": True,
         "inputs": ["frames", "meta", "padding_color"],
         "outputs": ["frames_restored", "padding_mask", "meta"],
+    },
+    "nodes/video_stabilizer_motion_apply.py": {
+        "node_id": "video_stabilizer_motion_apply",
+        "display_name": "Video Stabilizer Motion Apply",
+        "inputs": ["frames", "motion_meta", "framing_mode", "interpolation", "padding_color"],
+        "outputs": ["frames", "padding_mask", "meta"],
+    },
+    "nodes/video_stabilizer_shake_generator.py": {
+        "node_id": "video_stabilizer_shake_generator",
+        "display_name": "Video Stabilizer Shake Generator",
+        "inputs": ["frames_context", "frame_rate", "preset", "strength", "speed", "detail", "seed"],
+        "outputs": ["motion_meta"],
     },
 }
 
@@ -54,8 +67,12 @@ def _literal_string(node: ast.AST) -> str | None:
     return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
 
 
-def _schema_keywords(tree: ast.AST) -> dict[str, str]:
-    found: dict[str, str] = {}
+def _literal_bool(node: ast.AST) -> bool | None:
+    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, bool) else None
+
+
+def _schema_keywords(tree: ast.AST) -> dict[str, object]:
+    found: dict[str, object] = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -65,6 +82,10 @@ def _schema_keywords(tree: ast.AST) -> dict[str, str]:
         for keyword in node.keywords:
             if keyword.arg in {"node_id", "display_name", "category", "description"}:
                 value = _literal_string(keyword.value)
+                if value is not None:
+                    found[keyword.arg] = value
+            elif keyword.arg == "is_deprecated":
+                value = _literal_bool(keyword.value)
                 if value is not None:
                     found[keyword.arg] = value
     return found
@@ -106,6 +127,11 @@ def main() -> int:
             actual = keywords.get(key)
             if actual != expected_value:
                 failures.append(f"{relative_path}: {key} expected {expected_value!r}, got {actual!r}")
+        if "is_deprecated" in expected and keywords.get("is_deprecated") != expected["is_deprecated"]:
+            failures.append(
+                f"{relative_path}: is_deprecated expected {expected['is_deprecated']!r}, "
+                f"got {keywords.get('is_deprecated')!r}"
+            )
 
         if inputs != expected["inputs"]:
             failures.append(f"{relative_path}: input order mismatch: {inputs!r}")

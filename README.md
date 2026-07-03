@@ -2,108 +2,88 @@
 
 [![日本語版](https://img.shields.io/badge/README-日本語版-gray.svg)](README_ja.md)
 
-A ComfyUI custom node package for CPU-friendly video stabilization, padding mask generation, reusable motion metadata, and motion restore workflows.
+A ComfyUI custom node package for video stabilization.
 
-It provides five active nodes and one deprecated compatibility node:
+It mainly provides three functions:
 
-- **Classic**: sparse feature tracking with OpenCV / NumPy
-- **Flow**: dense optical flow using OpenCV DIS by default
-- **Motion Apply**: applies motion metadata to frames
-- **Shake Generator**: creates deterministic style-based motion metadata without changing pixels
-- **Shake Generator Manual**: creates the same kind of metadata from explicit recipe values
-- **Inverse**: deprecated compatibility node for restoring removed camera shake
+- Stabilize camera shake in a video
+- Restore the original shake from a stabilized video
+- Add artificial shake
 
 https://github.com/user-attachments/assets/7da060c1-d775-47b7-91e6-f7a2ce147389
-
-## Installation
-
-- Install via ComfyUI Manager.
 
 ## Nodes
 
 | Node | Purpose |
 | --- | --- |
-| `Video Stabilizer Classic` | Lightweight general-purpose stabilization using feature tracking. |
-| `Video Stabilizer Flow` | Higher-accuracy stabilization using DIS optical flow. TV-L1 is optional when `cv2.optflow` is available. |
-| `Video Stabilizer Motion Apply` | Applies `motion_meta` JSON to frames with crop/crop+pad/expand framing and optional motion blur. |
-| `Video Stabilizer Shake Generator` | Emits deterministic shake `motion_meta`; `style` chooses motion character and `amount` controls strength. |
-| `Video Stabilizer Shake Generator Manual` | Emits deterministic shake `motion_meta` from explicit pan/tilt/roll/zoom recipe values. |
-| `Video Stabilizer Inverse` | Deprecated compatibility node for restoring removed camera shake. |
+| `Video Stabilizer Classic` | Lightweight stabilizer using feature tracking. |
+| `Video Stabilizer Flow` | Higher-accuracy stabilizer using dense optical flow. |
+| `Video Stabilizer Motion Apply` | Applies `motion_meta` to frames (reapply, restore, or add generated shake). |
+| `Video Stabilizer Shake Generator` | Generates deterministic shake `motion_meta`. Does not touch the frames at all. |
+| `Video Stabilizer Shake Generator Manual` | Same as above, with pan/tilt/roll/zoom specified directly for fine control. |
 
-Flow normally uses DIS optical flow. If unavailable, it automatically falls back through TV-L1, translation estimation, and identity.
+## Installation
+
+- Install via ComfyUI Manager.
 
 ## Usage
 
-Input a video or batched images into either `Video Stabilizer Classic` or `Video Stabilizer Flow`.
+### Stabilization
 
-Use `padding_mask` when you want VACE or another outpainting workflow to fill borders created by stabilization.
+Just feed a video or a batch of images into `Video Stabilizer Classic` or `Video Stabilizer Flow` to stabilize it.
+`Classic` is a lightweight method using feature tracking; `Flow` uses dense optical flow, so it's heavier but more accurate. Unless processing speed is a real concern, `Flow` is the safe default.
 
-Connect Classic/Flow `motion_meta` plus the original frames to `Video Stabilizer Motion Apply` to reapply the same stabilization transform, or connect edited stabilized frames to restore the original canvas through the embedded legacy warp metadata. Connect Shake Generator output to Motion Apply when you want to add generated handheld motion.
+Main parameters:
 
-For tuning, start with `Video Stabilizer Shake Generator`, inspect `motion_meta.generator.recipe`, then enter those values in `Video Stabilizer Shake Generator Manual` and adjust the absolute pan/tilt/roll/zoom recipe.
-
-## Parameters
-
-Shared by Classic / Flow:
-
-| Parameter | Default | Notes |
-| --- | ---: | --- |
-| `frame_rate` | `16.0` | Input FPS used to scale the temporal smoothing window. |
-| `framing_mode` | `crop_and_pad` | `crop`, `crop_and_pad`, or `expand`. |
-| `transform_mode` | `similarity` | `translation`, `similarity`, or `perspective`. |
-| `camera_lock` | `false` | Pulls motion toward a tripod-like result. |
-| `strength` | `0.7` | Removal gain for estimated camera motion. Ignored while `camera_lock` is on. |
-| `smooth` | `0.5` | Temporal smoothing amount. Ignored while `camera_lock` is on. |
-| `keep_fov` | `0.6` | Crop-mode FOV preservation. `1.0` means no zoom; `0.0` allows maximum zoom. |
-| `padding_color` | `#7F7F7F` | HEX fill color for padded areas. Can use the core Color Picker `hex` output. |
-
-Framing modes:
-
-| Mode | Behavior |
+| Parameter | Description |
 | --- | --- |
-| `crop` | Hides borders with an aspect-ratio-preserving zoom/crop, reducing FOV. |
-| `crop_and_pad` | Limits zoom and pads remaining empty regions. |
-| `expand` | Does not crop at all; expands the canvas as needed. |
+| `framing_mode` | How to handle the areas exposed by stabilization. `crop` (zooms in to hide them, narrowing the field of view) / `crop_and_pad` (limits zoom and pads the remaining gaps) / `expand` (doesn't crop at all, expands the canvas as needed). |
+| `strength` | How much of the camera motion to remove. Closer to `1.0` gives a more locked-off result. |
+| `smooth` | How strongly to smooth the motion over time. Higher values leave only slow, sweeping motion. |
+| `camera_lock` | When on, pushes harder toward a tripod-like result. Used instead of `strength` / `smooth`. |
+| `keep_fov` | How much field of view to sacrifice in `crop`-style modes. `1.0` means no zoom, `0.0` allows maximum zoom. |
+| `padding_color` | The fill color for padded areas. |
 
-Shake Generator:
+### Restoring stabilized shake
 
-| Parameter | Default | Notes |
-| --- | ---: | --- |
-| `style` | `handheld` | `tripod`, `handheld`, `walking`, `action`, or `vibration`. |
-| `amount` | `1.0` | Overall shake amplitude. |
-| `speed` | `1.0` | Overall shake speed. |
-| `seed` | `0` | Deterministic seed. |
+The `meta` output of `Classic` / `Flow` records the exact camera motion that was removed. Connect it to `Video Stabilizer Motion Apply` and the same motion can be reproduced.
 
-Shake Generator Manual exposes the resolved recipe directly: `pan`, `tilt`, `roll`, `zoom`, `drift_freq`, `tremor`, `tremor_freq`, `jitter_rate`, `step`, `randomness`, and `virtual_fov`.
+For example, use this when you've stabilized footage, regenerated or edited it with a video generation AI, and want to put the original camera work back on top of the result — removing the shake to make editing easier, then restoring the natural camera motion at the end.
 
-Motion Apply:
+### Adding artificial shake
 
-| Parameter | Default | Notes |
-| --- | ---: | --- |
-| `framing_mode` | `crop_and_pad` | `crop`, `crop_and_pad`, or `expand`. |
-| `interpolation` | `bilinear` | `bilinear` or `bicubic`. |
-| `motion_blur` | `0.0` | Shutter fraction. `0.5` is roughly a 180-degree shutter. |
-| `motion_blur_quality` | `Standard` | `Draft`, `Standard`, `High`, or `Ultra`. Higher quality averages more shutter samples and is slower. |
+Conversely, to add a handheld feel to static footage, generate shake `motion_meta` with `Video Stabilizer Shake Generator` and connect it to `Video Stabilizer Motion Apply` to apply it.
 
-## Outputs
+Main parameters:
 
-| Output | Notes |
+| Parameter | Description |
 | --- | --- |
-| `frames_stabilized` | Stabilized video frames. |
-| `padding_mask` | Mask of padded / missing regions. |
-| `meta` | JSON diagnostics, including estimated motion, applied stabilization matrices, and the `motion_meta` block used by Motion Apply. |
+| `style` | The character of the shake. `tripod` (nearly static) / `handheld` (natural handheld) / `walking` (up-and-down motion from walking) / `action` (intense motion) / `vibration` (mechanical vibration, e.g. inside a vehicle). |
+| `amount` | Overall shake strength. |
+| `speed` | Overall shake speed. |
+| `seed` | The same value always reproduces the same shake. |
 
-## Inverse Stabilization
+For finer control, use `Video Stabilizer Shake Generator Manual`. Instead of picking a `style`, you can directly specify numeric values such as pan / tilt / roll / zoom and the shake frequencies.
 
-`Video Stabilizer Motion Apply` replaces the old inverse workflow. `Video Stabilizer Inverse` is deprecated and kept only for compatibility.
+### Combining with video generation AI
 
-With `crop` / `crop_and_pad`, gaps will almost always appear at the end because pixels were cropped or padded during stabilization. Use `expand` when you plan to use Inverse.
+Stabilization generally exposes areas at the edges, which are normally hidden by cropping — at the cost of field of view.
+This node outputs those exposed areas as a mask, so a video generation AI can outpaint them, letting you stabilize footage without sacrificing the field of view.
 
-## Example Workflows
+Example workflows:
 
 - [Wan2.1_VACE_outpainting_VideoStabilizer.json](example_workflows/Wan2.1_VACE_outpainting_VideoStabilizer.json)
 - [Wan2.2-VACE-Fun_outpainting_VideoStabilizer.json](example_workflows/Wan2.2-VACE-Fun_outpainting_VideoStabilizer.json)
-- [Sample Video (Pexels)](https://www.pexels.com/ja-jp/video/29507473/)
+
+([Sample video](https://www.pexels.com/ja-jp/video/29507473/))
+
+## Learn more
+
+For a closer look at how the parameters behave and some simple workflows, see:
+
+- [日本語](https://comfyui.nomadoor.net/ja/notes/comfyui-video-stabilizer/)
+- [English](https://comfyui.nomadoor.net/en/notes/comfyui-video-stabilizer/)
+- [中文](https://comfyui.nomadoor.net/zh/notes/comfyui-video-stabilizer/)
 
 ## License
 

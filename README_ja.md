@@ -2,108 +2,88 @@
 
 [![English](https://img.shields.io/badge/README-English-gray.svg)](README.md)
 
-CPU で扱いやすい動画手ぶれ補正、padding mask 出力、再利用できる motion metadata、元の動きへ戻す workflow のための ComfyUI custom node です。
+ComfyUI 上で動画の手ブレ補正を行うための custom node です。
 
-有効なノードが5種類、deprecated 互換ノードが1種類あります。
+主に以下の3つの機能があります。
 
-- **Classic**: OpenCV / NumPy による特徴点トラッキング
-- **Flow**: OpenCV DIS を標準で使う dense optical flow
-- **Motion Apply**: motion metadata をフレームへ適用
-- **Shake Generator**: フレームを加工せず、style ベースの motion metadata を生成
-- **Shake Generator Manual**: 明示的な recipe 値から同種の motion metadata を生成
-- **Inverse**: 元の手ブレを戻すための deprecated 互換ノード
+- 動画の手ブレを補正する
+- 手ブレ補正した動画から、元の手ブレを復元する
+- 人工的な手ブレを加える
 
 https://github.com/user-attachments/assets/7da060c1-d775-47b7-91e6-f7a2ce147389
-
-## インストール
-
-- ComfyUI Manager からインストールしてください。
 
 ## ノード
 
 | Node | 役割 |
 | --- | --- |
-| `Video Stabilizer Classic` | 特徴点トラッキングによる軽量な汎用 stabilizer。 |
-| `Video Stabilizer Flow` | DIS optical flow による高精度 stabilizer。`cv2.optflow` が利用可能な場合のみ TV-L1 も使えます。 |
-| `Video Stabilizer Motion Apply` | `motion_meta` JSON を crop / crop+pad / expand framing と optional motion blur でフレームへ適用します。 |
-| `Video Stabilizer Shake Generator` | 決定的な shake `motion_meta` を出力します。`style` は揺れの種類、`amount` は強さです。 |
-| `Video Stabilizer Shake Generator Manual` | pan / tilt / roll / zoom などの絶対値 recipe から shake `motion_meta` を出力します。 |
-| `Video Stabilizer Inverse` | 元の手ブレを戻すための deprecated 互換ノード。 |
+| `Video Stabilizer Classic` | 特徴点トラッキングによる軽量な stabilizer。 |
+| `Video Stabilizer Flow` | dense optical flow による高精度な stabilizer。 |
+| `Video Stabilizer Motion Apply` | `motion_meta` をフレームへ適用します(再適用・復元・生成した手ブレの付与)。 |
+| `Video Stabilizer Shake Generator` | 決定的な手ブレ風 `motion_meta` を生成します。フレームには一切手を加えません。 |
+| `Video Stabilizer Shake Generator Manual` | 同上、pan/tilt/roll/zoom を直接指定して細かく調整できます。 |
 
-Flow は通常 DIS optical flow を使います。使えない場合は TV-L1、平行移動推定、identity の順に自動で fallback します。
+## インストール
+
+- ComfyUI Manager からインストールしてください。
 
 ## 使い方
 
-動画、またはバッチ画像を `Video Stabilizer Classic` もしくは `Video Stabilizer Flow` に入力します。
+### 手振れ補正
 
-`padding_mask` は、手ブレ補正でできた余白を VACE などで補完したいときに使います。
+動画、またはバッチ画像を `Video Stabilizer Classic` か `Video Stabilizer Flow` に入力するだけで補正できます。
+`Classic` は特徴点トラッキングによる軽量な方式、`Flow` は dense optical flow を使うぶん重いですが精度が高い方式です。処理速度に大きな不満が無いのなら `Flow` を使っておけば間違いないでしょう。
 
-Classic/Flow の `motion_meta` と元フレームを `Video Stabilizer Motion Apply` へ接続すると同じ stabilization transform を再適用できます。補正済みフレームを編集したあと元キャンバスへ戻す場合も、埋め込まれた legacy warp metadata により Motion Apply で復元できます。生成した手持ち感を足す場合は Shake Generator の出力を Motion Apply へ接続します。
+主なパラメータ:
 
-細かく調整する場合は、まず `Video Stabilizer Shake Generator` で style を試し、`motion_meta.generator.recipe` を確認して、その値を `Video Stabilizer Shake Generator Manual` に転記してから pan / tilt / roll / zoom などを調整します。
-
-## パラメータ
-
-Classic / Flow 共通:
-
-| Parameter | Default | 説明 |
-| --- | ---: | --- |
-| `frame_rate` | `16.0` | 時間方向の smoothing window を入力 FPS に合わせます。 |
-| `framing_mode` | `crop_and_pad` | `crop`, `crop_and_pad`, `expand` から選択します。 |
-| `transform_mode` | `similarity` | `translation`, `similarity`, `perspective` から選択します。 |
-| `camera_lock` | `false` | 三脚で撮ったような結果へ強めに寄せます。 |
-| `strength` | `0.7` | 推定したカメラ運動をどれだけ除去するか。`camera_lock` 中は無視されます。 |
-| `smooth` | `0.5` | 時間方向の平滑化量。`camera_lock` 中は無視されます。 |
-| `keep_fov` | `0.6` | crop mode の画角維持量。`1.0` はズームなし、`0.0` は最大ズーム許容。 |
-| `padding_color` | `#7F7F7F` | padding 領域の HEX 色。core Color Picker の `hex` 出力を接続できます。 |
-
-Framing mode:
-
-| Mode | 動作 |
+| Parameter | 説明 |
 | --- | --- |
-| `crop` | アスペクト比を保ったズーム/クロップで縁を隠します。画角は狭くなります。 |
-| `crop_and_pad` | ズームを抑え、不足分を padding します。 |
-| `expand` | 全く crop せず、必要な分だけキャンバスを拡張します。 |
+| `framing_mode` | 補正ではみ出した部分をどう処理するか。`crop`(ズームして隠す・画角が狭くなる)/ `crop_and_pad`(ズームを抑えて余白を padding する)/ `expand`(一切 crop せず、必要な分だけキャンバスを広げる)。 |
+| `strength` | カメラの動きをどれだけ取り除くか。`1.0` に近いほど強く止まった映像になります。 |
+| `smooth` | 時間方向の平滑化の強さ。大きいほどゆったりした動きだけが残ります。 |
+| `camera_lock` | オンにすると三脚固定に近い、より強い補正になります。`strength` / `smooth` の代わりに使います。 |
+| `keep_fov` | `crop` 系のモードでどこまで画角を犠牲にしてよいか。`1.0` はズームなし、`0.0` は必要なだけズームを許可します。 |
+| `padding_color` | 余白を埋める色。 |
 
-Shake Generator:
+### 補正した手ブレを戻す
 
-| Parameter | Default | 説明 |
-| --- | ---: | --- |
-| `style` | `handheld` | `tripod`, `handheld`, `walking`, `action`, `vibration` から揺れの種類を選びます。 |
-| `amount` | `1.0` | 揺れ全体の強さ。 |
-| `speed` | `1.0` | 揺れ全体の速さ。 |
-| `seed` | `0` | 決定的生成用の seed。 |
+`Classic` / `Flow` の `meta` 出力には、取り除いたカメラの動きがそのまま記録されています。これを `Video Stabilizer Motion Apply` に接続すると、同じ動きを再現できます。
 
-Shake Generator Manual は解決済み recipe を直接公開します: `pan`, `tilt`, `roll`, `zoom`, `drift_freq`, `tremor`, `tremor_freq`, `jitter_rate`, `step`, `randomness`, `virtual_fov`。
+たとえば、一度手ブレを補正したフレームを動画生成 AI で編集・生成し直したあと、その結果に「元のカメラワーク」をもう一度乗せたい場合に使います。手ブレを消して作業しやすくしてから、最後に自然なカメラの揺れへ戻す、という流れです。
 
-Motion Apply:
+### 人工的な手ブレを追加する
 
-| Parameter | Default | 説明 |
-| --- | ---: | --- |
-| `framing_mode` | `crop_and_pad` | `crop`, `crop_and_pad`, `expand` から選択します。 |
-| `interpolation` | `bilinear` | `bilinear` または `bicubic`。 |
-| `motion_blur` | `0.0` | シャッター開角割合。`0.5` がだいたい 180度シャッター相当です。 |
-| `motion_blur_quality` | `Standard` | `Draft`, `Standard`, `High`, `Ultra` から選びます。高品質ほど多くのシャッターサンプルを平均し、滑らかですが遅くなります。 |
+逆に、静止した映像に手持ち感を足したいときは `Video Stabilizer Shake Generator` で揺れの `motion_meta` を作り、`Video Stabilizer Motion Apply` に接続して適用します。
 
-## 出力
+主なパラメータ:
 
-| Output | 説明 |
+| Parameter | 説明 |
 | --- | --- |
-| `frames_stabilized` | 補正済みフレーム。 |
-| `padding_mask` | padding / 欠損領域の mask。 |
-| `meta` | 推定 motion、実際に適用した補正行列、Motion Apply 用の `motion_meta` block を含む JSON 診断情報。 |
+| `style` | 揺れの種類。`tripod`(ほぼ静止)/ `handheld`(自然な手持ち)/ `walking`(歩きながらの上下動)/ `action`(激しい動き)/ `vibration`(車内などの機械的な振動)。 |
+| `amount` | 揺れ全体の強さ。 |
+| `speed` | 揺れ全体の速さ。 |
+| `seed` | 同じ値なら毎回同じ揺れを再現できます。 |
 
-## Inverse stabilization
+もっと細かく調整したい場合は `Video Stabilizer Shake Generator Manual` を使ってください。`style` を選ぶ代わりに、pan / tilt / roll / zoom や揺れの周波数などを数値で直接指定できます。
 
-`Video Stabilizer Motion Apply` が旧 inverse workflow の置き換えです。`Video Stabilizer Inverse` は deprecated 互換ノードとして残しています。
+### 動画生成AIと組み合わせる
 
-`crop` / `crop_and_pad` では仕組み上、最後にほぼ必ず隙間ができます。Inverse まで使う場合は `expand` がオススメです。
+一般的に手振れ補正をすると、はみ出す部分がでてくるため、クロップすることでそれを隠します。が、当然ながら画角が犠牲になります。
+このノードははみ出た部分をマスクとして出力するため、動画生成AIでこの部分をoutpaintingすれば、画角を犠牲にせず手振れ補正することが可能です。
 
-## サンプル Workflow
+サンプル workflow:
 
 - [Wan2.1_VACE_outpainting_VideoStabilizer.json](example_workflows/Wan2.1_VACE_outpainting_VideoStabilizer.json)
 - [Wan2.2-VACE-Fun_outpainting_VideoStabilizer.json](example_workflows/Wan2.2-VACE-Fun_outpainting_VideoStabilizer.json)
-- [Sample Video (Pexels)](https://www.pexels.com/ja-jp/video/29507473/)
+
+([サンプル動画](https://www.pexels.com/ja-jp/video/29507473/))
+
+## より詳しく知りたい方へ
+
+パラメータによる挙動の違いや簡単な workflow は、以下の記事で解説しています。
+
+- [日本語](https://comfyui.nomadoor.net/ja/notes/comfyui-video-stabilizer/)
+- [English](https://comfyui.nomadoor.net/en/notes/comfyui-video-stabilizer/)
+- [中文](https://comfyui.nomadoor.net/zh/notes/comfyui-video-stabilizer/)
 
 ## License
 

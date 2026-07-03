@@ -100,6 +100,7 @@ def _warp_with_matrices(
             borderValue=border_value,
         )
         frames_out[idx] = _ensure_rgb(warped.astype(np.float32))
+        context.frames[idx] = None  # type: ignore[assignment]  # release consumed source frame on large sequences
         if masks_zero:
             if progress_callback is not None:
                 progress_callback()
@@ -193,6 +194,7 @@ def _warp_with_motion_blur(
                 progress_callback()
 
         frames_out[idx] = frame_accum / float(sample_count)
+        context.frames[idx] = None  # type: ignore[assignment]  # release consumed source frame on large sequences
         if not masks_zero:
             mean_coverage = coverage_accum / float(sample_count)
             mask = 1.0 - mean_coverage

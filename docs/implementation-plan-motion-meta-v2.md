@@ -155,47 +155,26 @@ interpolation は `cv2.INTER_LINEAR` / `cv2.INTER_CUBIC`。maskは常に `INTER_
 1. `frames_context`: `io.Image.Input`(socket)— **バッチ数・解像度の取得のみに使う。フレームは加工しない。** tooltip/description に明記:
    > The input frames are used only to read frame count and resolution. This node outputs motion metadata only; connect it to Video Stabilizer Motion Apply to move pixels.
 2. `frame_rate`: `io.Float.Input(default=16.0, min=1.0, step=0.1)` — Classic/Flow と同名・同デフォルトで統一。`_normalize_video_input` がdict入力から fps を拾えた場合はそちらを優先し、widget値はフォールバック(Classic/Flowの `fps_requested`/`fps_effective` と同じ流儀)。
-3. `preset`: `io.Combo.Input([...6種...], default="handheld_subtle")`
-4. `strength`: `io.Float.Input(default=1.0, min=0.0, max=3.0, step=0.05)` — 全振幅の一括スケール
+3. `style`: `io.Combo.Input(["tripod", "handheld", "walking", "action", "vibration"], default="handheld")`
+4. `amount`: `io.Float.Input(default=1.0, min=0.0, max=3.0, step=0.05)` — 全振幅の一括スケール
 5. `speed`: `io.Float.Input(default=1.0, min=0.1, max=3.0, step=0.05)` — 全周波数の一括スケール
-6. `detail`: `io.Float.Input(default=0.35, min=0.0, max=1.0, step=0.05, display_mode=slider)` — 高周波帯の寄与
-7. `seed`: `io.Int.Input(default=0, min=0, max=0xffffffffffffffff, control_after_generate=io.ControlAfterGenerate.fixed)`
+6. `seed`: `io.Int.Input(default=0, min=0, max=0xffffffffffffffff, control_after_generate=io.ControlAfterGenerate.fixed)`
 
 出力: `motion_meta`(JSON, "Motion Meta")のみ。**フレームpassthroughは付けない。**
 
 ### 生成アルゴリズム(shake_noise.py)
 
-決定性: `rng = np.random.default_rng(seed)` のみ使用。globalな `np.random.*`・時刻・`random` モジュール禁止。同一 `(frame_count, width, height, fps, preset, strength, speed, detail, seed)` → 完全同一出力。
+決定性: `rng = np.random.default_rng(seed)` のみ使用。globalな `np.random.*`・時刻・`random` モジュール禁止。同一 `(frame_count, width, height, fps, recipe, amount, speed, seed)` → 完全同一出力。
 
-チャンネル: `tx, ty, rotation_deg, log_scale` の4本。
+Motion is generated in camera-angle space: `pan_deg`, `tilt_deg`, `roll_deg`, and `zoom_log`. `style` selects an absolute `ShakeRecipe`; `amount` scales amplitudes, `speed` scales frequencies, and `motion_meta.generator.recipe` records the absolute recipe before `amount` / `speed` are applied.
 
-帯域合成(smooth value noise):
-- 各帯域の基準周波数(Hz): low / mid / high はpresetごとに持つ(下表)。実効周波数 = 基準 × `speed`、**ただし `fps_effective / 2` でクランプ**(エイリアシング防止)。
-- 帯域ごとに: 時間軸 `t = frame_index / fps` 上に間隔 `1/freq` でrng制御点(標準正規)を置き、**Catmull-Rom(cubic)補間**で各フレーム値を得る。制御点は端の外挿用に前後2点余分に生成。
-- `channel(t) = low(t)*w_low + mid(t)*w_mid + high(t)*w_high*detail`
-- 合成後、**チャンネルごとに平均を引く**(クリップ全体の定常オフセット/ドリフト除去)。
-- 振幅: `base = min(width, height)` として `tx = channel_tx * tx_amp * base * strength`(ty同様)、`rotation_deg = channel_rot * rot_amp * strength`、`log_scale = channel_scale * zoom_amp * strength`。
-- 制御点生成は解像度に依存させない(振幅スケールのみ解像度依存)→ 同seedなら解像度違いでも同じ「動き」になる。
-- rngの消費順序を固定(チャンネル順 × 帯域順)し、コメントで「順序変更は互換性破壊」と明記。
-
-### プリセット定数表(初期値。実装後に目視チューニング可、ただしADRに最終値を記録)
-
-| preset | tx/ty amp (×base) | rot amp (deg) | zoom amp (log) | 帯域重み low/mid/high | 帯域周波数 low/mid/high (Hz) |
-|---|---|---|---|---|---|
-| handheld_subtle | 0.003 / 0.003 | 0.10 | 0.001 | 1.0 / 0.5 / 0.3 | 0.3 / 1.1 / 3.5 |
-| handheld | 0.006 / 0.006 | 0.20 | 0.002 | 1.0 / 0.7 / 0.4 | 0.3 / 1.1 / 3.5 |
-| handheld_rough | 0.012 / 0.010 | 0.45 | 0.004 | 0.9 / 1.0 / 0.7 | 0.4 / 1.3 / 4.0 |
-| tripod_micro | 0.0008 / 0.0008 | 0.03 | 0.0003 | 1.0 / 0.3 / 0.2 | 0.15 / 0.9 / 3.0 |
-| telephoto | 0.002 / 0.002 | 0.35 | 0.001 | 1.0 / 0.6 / 0.5 | 0.25 / 1.0 / 3.5 |
-| vibration | 0.004 / 0.004 | 0.08 | 0.001 | 0.2 / 0.5 / 1.5 | 0.5 / 2.5 / 7.0 |
-
-設計意図: rotation 主体(translationだけだと平行移動にしか見えない)、zoom は極小(強いとエフェクト感が出る)。デフォルト `handheld_subtle` はAI生成動画に薄く撮影感を足す用途。
+Style presets are `tripod`, `handheld`, `walking`, `action`, and `vibration`. Manual editing is exposed through `Video Stabilizer Shake Generator Manual`, whose defaults match the `handheld` style and whose inputs directly mirror the recipe fields (`pan`, `tilt`, `roll`, `zoom`, `drift_freq`, `tremor`, `tremor_freq`, `jitter_rate`, `step`, `randomness`, `virtual_fov`).
 
 ### matrix化
 
-画像中心 `(cx, cy) = (w/2, h/2)` 回りの相似変換:
-`M = T(cx + tx, cy + ty) @ R(rotation_deg) @ S(exp(log_scale)) @ T(-cx, -cy)`(3x3、絶対ピクセル座標)。
-`input_size == output_size == (w, h)`、`source="generated_shake"`、`generator` ブロックに5パラメータ+seedを記録。`build_motion_meta_v2` で出力。
+virtual FOV から focal length を作り、pan/tilt angle を pixel translation へ投影する。画像中心 `(cx, cy) = (w/2, h/2)` 回りの相似変換:
+`M = T(cx + tx, cy + ty) @ R(roll_deg) @ S(exp(zoom_log)) @ T(-cx, -cy)`(3x3、絶対ピクセル座標)。
+`input_size == output_size == (w, h)`、`source="generated_shake"`、`generator` ブロックに `node` / `style` / `amount` / `speed` / `seed` / `recipe` を記録。`build_motion_meta_v2` で出力。
 
 ---
 

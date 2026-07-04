@@ -62,8 +62,9 @@ Main parameters:
 | `amount` | Overall shake strength. |
 | `speed` | Overall shake speed. |
 | `seed` | The same value always reproduces the same shake. |
+| `lock_horizon` | Removes roll rotation while keeping the selected shake's left-right and up-down motion. |
 
-For finer control, use `Video Stabilizer Shake Generator Manual`. Instead of picking a `style`, you can directly specify numeric values such as pan / tilt / roll / zoom and the shake frequencies.
+For finer control, use `Video Stabilizer Shake Generator Manual`. Instead of picking a `style`, you can directly specify numeric values such as pan / tilt / roll / zoom and the shake frequencies. Set `roll` to `0.0` there if you want a level horizon.
 
 ### Combining with video generation AI
 

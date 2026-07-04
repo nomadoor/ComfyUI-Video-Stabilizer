@@ -62,8 +62,9 @@ https://github.com/user-attachments/assets/7da060c1-d775-47b7-91e6-f7a2ce147389
 | `amount` | 揺れ全体の強さ。 |
 | `speed` | 揺れ全体の速さ。 |
 | `seed` | 同じ値なら毎回同じ揺れを再現できます。 |
+| `lock_horizon` | 左右・上下の揺れは残しつつ、画面の傾き(roll)を取り除きます。 |
 
-もっと細かく調整したい場合は `Video Stabilizer Shake Generator Manual` を使ってください。`style` を選ぶ代わりに、pan / tilt / roll / zoom や揺れの周波数などを数値で直接指定できます。
+もっと細かく調整したい場合は `Video Stabilizer Shake Generator Manual` を使ってください。`style` を選ぶ代わりに、pan / tilt / roll / zoom や揺れの周波数などを数値で直接指定できます。水平を保ちたい場合は `roll` を `0.0` にします。
 
 ### 動画生成AIと組み合わせる
 

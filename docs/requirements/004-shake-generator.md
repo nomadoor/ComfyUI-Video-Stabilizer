@@ -18,6 +18,7 @@ Simple style-based producer:
 - `amount`: global motion amplitude multiplier, `0.0..3.0`
 - `speed`: global frequency multiplier, `0.1..3.0`
 - `seed`: ComfyUI fixed seed control
+- `lock_horizon`: removes roll rotation while preserving the selected pan, tilt, zoom, timing, and seed, default `false`
 
 ### Video Stabilizer Shake Generator Manual
 
@@ -53,6 +54,7 @@ Both nodes write resolved absolute values to `motion_meta.generator.recipe`:
   "amount": 1.0,
   "speed": 1.0,
   "seed": 0,
+  "lock_horizon": false,
   "recipe": {
     "pan": 0.46,
     "tilt": 0.60,
@@ -70,6 +72,7 @@ Both nodes write resolved absolute values to `motion_meta.generator.recipe`:
 ```
 
 The recipe is recorded before `amount` and `speed` are applied. Users can copy it into the Manual node to continue from a style preset with visible, editable absolute values.
+`lock_horizon` is recorded outside the recipe because it is a style-node constraint, not a recipe value; Manual users reproduce it by setting `roll` to `0.0`.
 
 ## Motion Model
 
@@ -90,6 +93,7 @@ M  = T(cx + tx, cy + ty) @ R(roll_deg) @ S(exp(zoom_log)) @ T(-cx, -cy)
 ```
 
 Every generated channel subtracts its first-frame value, so `per_frame[0].matrix` is identity.
+When `lock_horizon` is enabled, the final `roll_deg` channel is set to zero after all style components are generated, including walking step roll.
 
 ## Styles
 
@@ -107,6 +111,6 @@ Values below are the amount `1.0` baseline. Pan, tilt, roll, and step are degree
 
 ## Determinism
 
-The same `(frame_count, width, height, fps, recipe, amount, speed, seed)` must produce identical JSON. The implementation uses only a local NumPy generator created from `seed`; global random APIs, time, and hidden state are not allowed.
+The same `(frame_count, width, height, fps, recipe, amount, speed, seed, lock_horizon)` must produce identical JSON. The implementation uses only a local NumPy generator created from `seed`; global random APIs, time, and hidden state are not allowed.
 
 Frequencies are multiplied by `speed` and clamped to `fps / 2` to avoid aliasing.

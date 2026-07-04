@@ -292,6 +292,7 @@ def generate_shake_motion_meta(
     seed: int,
     node: str = "shake_generator",
     style: str = "manual",
+    lock_horizon: bool = False,
 ) -> dict:
     recipe = clamp_recipe(recipe)
     frame_count = int(frame_count)
@@ -311,6 +312,13 @@ def generate_shake_motion_meta(
         speed=speed,
         seed=seed,
     )
+    if lock_horizon:
+        components = ShakeComponents(
+            pan_deg=components.pan_deg,
+            tilt_deg=components.tilt_deg,
+            roll_deg=np.zeros_like(components.roll_deg),
+            zoom_log=components.zoom_log,
+        )
 
     matrices = [
         _matrix(
@@ -338,6 +346,7 @@ def generate_shake_motion_meta(
             "amount": amount,
             "speed": speed,
             "seed": int(seed),
+            "lock_horizon": bool(lock_horizon),
             "recipe": recipe_to_dict(recipe),
         },
     )

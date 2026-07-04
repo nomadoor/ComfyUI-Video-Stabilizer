@@ -47,6 +47,7 @@ def _generator_block() -> dict[str, object]:
         "amount": 1.0,
         "speed": 1.0,
         "seed": 0,
+        "lock_horizon": False,
         "recipe": {
             "pan": 0.40,
             "tilt": 0.33,
@@ -100,6 +101,7 @@ def _shake(
     amount: float = 1.0,
     speed: float = 1.0,
     seed: int = 123,
+    lock_horizon: bool = False,
 ) -> dict:
     return generate_shake_motion_meta(
         recipe=STYLES[style],
@@ -112,6 +114,7 @@ def _shake(
         seed=seed,
         node="shake_generator",
         style=style,
+        lock_horizon=lock_horizon,
     )
 
 
@@ -285,6 +288,14 @@ def main() -> int:
     ]
     if max(rotations) > 1e-9:
         raise AssertionError("manual roll=0 should zero generated roll")
+
+    locked = _shake("walking", frame_count=64, width=96, height=54, seed=19, lock_horizon=True)
+    if locked["generator"].get("lock_horizon") is not True:
+        raise AssertionError("lock_horizon should be recorded in generator metadata")
+    for idx, entry in enumerate(locked["per_frame"]):
+        matrix = np.asarray(entry["matrix"], dtype=np.float64)
+        if abs(_rotation_degrees(matrix)) > 1e-9:
+            raise AssertionError(f"lock_horizon left roll in frame {idx}")
 
     frames = _frames(3)
     identity_meta = {

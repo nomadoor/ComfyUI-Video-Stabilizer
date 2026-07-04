@@ -45,7 +45,15 @@ class VideoStabilizerShakeGeneratorManual(io.ComfyNode):
             ),
             io.Float.Input("pan", default=HANDHELD_DEFAULT.pan, min=0.0, max=5.0, step=0.01, display_name="Pan"),
             io.Float.Input("tilt", default=HANDHELD_DEFAULT.tilt, min=0.0, max=5.0, step=0.01, display_name="Tilt"),
-            io.Float.Input("roll", default=HANDHELD_DEFAULT.roll, min=0.0, max=5.0, step=0.01, display_name="Roll"),
+            io.Float.Input(
+                "roll",
+                default=HANDHELD_DEFAULT.roll,
+                min=0.0,
+                max=5.0,
+                step=0.01,
+                display_name="Roll",
+                tooltip="In-plane rotation amplitude. Set to 0.0 to keep the horizon level.",
+            ),
             io.Float.Input("zoom", default=HANDHELD_DEFAULT.zoom, min=0.0, max=0.05, step=0.001, display_name="Zoom"),
             io.Float.Input(
                 "drift_freq",

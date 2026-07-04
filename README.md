@@ -53,6 +53,7 @@ For example, use this when you've stabilized footage, regenerated or edited it w
 ### Adding artificial shake
 
 Conversely, to add a handheld feel to static footage, generate shake `motion_meta` with `Video Stabilizer Shake Generator` and connect it to `Video Stabilizer Motion Apply` to apply it.
+Enable `lock_horizon` when you want handheld X/Y motion without roll rotation or a tilted horizon.
 
 Main parameters:
 
@@ -61,9 +62,10 @@ Main parameters:
 | `style` | The character of the shake. `tripod` (nearly static) / `handheld` (natural handheld) / `walking` (up-and-down motion from walking) / `action` (intense motion) / `vibration` (mechanical vibration, e.g. inside a vehicle). |
 | `amount` | Overall shake strength. |
 | `speed` | Overall shake speed. |
+| `lock_horizon` | Removes roll rotation while keeping the selected shake's left-right and up-down motion. |
 | `seed` | The same value always reproduces the same shake. |
 
-For finer control, use `Video Stabilizer Shake Generator Manual`. Instead of picking a `style`, you can directly specify numeric values such as pan / tilt / roll / zoom and the shake frequencies.
+For finer control, use `Video Stabilizer Shake Generator Manual`. Instead of picking a `style`, you can directly specify numeric values such as pan / tilt / roll / zoom and the shake frequencies. Set `roll` to `0.0` there if you want a level horizon.
 
 ### Combining with video generation AI
 

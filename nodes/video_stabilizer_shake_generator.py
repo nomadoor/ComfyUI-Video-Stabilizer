@@ -66,6 +66,12 @@ class VideoStabilizerShakeGenerator(io.ComfyNode):
                 display_name="Speed",
                 display_mode=io.NumberDisplay.slider,
             ),
+            io.Boolean.Input(
+                "lock_horizon",
+                default=False,
+                display_name="Lock Horizon",
+                tooltip="Remove roll rotation while keeping the selected pan, tilt, and zoom motion.",
+            ),
             io.Int.Input(
                 "seed",
                 default=0,
@@ -89,6 +95,7 @@ class VideoStabilizerShakeGenerator(io.ComfyNode):
         amount: float,
         speed: float,
         seed: int,
+        lock_horizon: bool = False,
     ) -> io.NodeOutput:
         context = _normalize_video_input(frames_context)
         fps = _resolve_fps(context, frame_rate)
@@ -103,6 +110,7 @@ class VideoStabilizerShakeGenerator(io.ComfyNode):
             seed=seed,
             node="shake_generator",
             style=style,
+            lock_horizon=lock_horizon,
         )
         return io.NodeOutput({"motion_meta": motion_meta})
 
